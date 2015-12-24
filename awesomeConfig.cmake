@@ -49,7 +49,7 @@ a_find_program(CONVERT_EXECUTABLE convert TRUE)
 # pkg-config
 include(FindPkgConfig)
 # lua
-include(FindLua)
+find_package(Lua 5.3 REQUIRED)
 # }}}
 
 # {{{ Check if documentation can be build
