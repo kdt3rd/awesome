@@ -14,17 +14,22 @@ local abutton = require("awful.button")
 local aclient = require("awful.client")
 local atooltip = require("awful.tooltip")
 local beautiful = require("beautiful")
-local object = require("gears.object")
 local drawable = require("wibox.drawable")
-local base = require("wibox.widget.base")
 local imagebox = require("wibox.widget.imagebox")
 local textbox = require("wibox.widget.textbox")
+local base = require("wibox.widget.base")
 local capi = {
     client = client
 }
 local titlebar = {
     widget = {}
 }
+
+--- Set a declarative widget hierarchy description.
+-- See [The declarative layout system](../documentation/03-declarative-layout.md.html)
+-- @param args An array containing the widgets disposition
+-- @name setup
+-- @class function
 
 --- Show tooltips when hover on titlebar buttons (defaults to 'true')
 titlebar.enable_tooltip = true
@@ -59,14 +64,21 @@ end
 
 --- Get a client's titlebar
 -- @class function
--- @param c The client for which a titlebar is wanted.
--- @param[opt] args A table with extra arguments for the titlebar. The
--- "size" is the height of the titlebar. Available "position" values are top,
--- left, right and bottom. Additionally, the foreground and background colors
--- can be configured via e.g. "bg_normal" and "bg_focus".
+-- @tparam client c The client for which a titlebar is wanted.
+-- @tparam[opt={}] table args A table with extra arguments for the titlebar. 
+-- @tparam[opt=font.height*1.5] number args.size The height of the titlebar. 
+-- @tparam[opt=top] string args.position" values are `top`,
+-- `left`, `right` and `bottom`.
+-- @tparam[opt=top] string args.bg_normal
+-- @tparam[opt=top] string args.bg_focus
+-- @tparam[opt=top] string args.bgimage_normal
+-- @tparam[opt=top] string args.bgimage_focus
+-- @tparam[opt=top] string args.fg_normal
+-- @tparam[opt=top] string args.fg_focus
+-- @tparam[opt=top] string args.font
 -- @name titlebar
 local function new(c, args)
-    local args = args or {}
+    args = args or {}
     local position = args.position or "top"
     local size = args.size or util.round(beautiful.get_font_height(args.font) * 1.5)
     local d = get_titlebar_function(c, position)(c, size)
@@ -86,9 +98,10 @@ local function new(c, args)
         }
         ret = drawable(d, context, "awful.titlebar")
         local function update_colors()
-            local args = bars[position].args
-            ret:set_bg(get_color("bg", c, args))
-            ret:set_fg(get_color("fg", c, args))
+            local args_ = bars[position].args
+            ret:set_bg(get_color("bg", c, args_))
+            ret:set_fg(get_color("fg", c, args_))
+            ret:set_bgimage(get_color("bgimage", c, args_))
         end
 
         bars[position] = {
@@ -108,6 +121,9 @@ local function new(c, args)
     -- Make sure the titlebar has the right colors applied
     bars[position].update_colors()
 
+    -- Handle declarative/recursive widget container
+    ret.setup = base.widget.setup
+
     return ret
 end
 
@@ -116,7 +132,7 @@ end
 -- @param[opt] position The position of the titlebar. Must be one of "left",
 --   "right", "top", "bottom". Default is "top".
 function titlebar.show(c, position)
-    local position = position or "top"
+    position = position or "top"
     local bars = all_titlebars[c]
     local data = bars and bars[position]
     local args = data and data.args
@@ -128,7 +144,7 @@ end
 -- @param[opt] position The position of the titlebar. Must be one of "left",
 --   "right", "top", "bottom". Default is "top".
 function titlebar.hide(c, position)
-    local position = position or "top"
+    position = position or "top"
     get_titlebar_function(c, position)(c, 0)
 end
 
@@ -137,8 +153,8 @@ end
 -- @param[opt] position The position of the titlebar. Must be one of "left",
 --   "right", "top", "bottom". Default is "top".
 function titlebar.toggle(c, position)
-    local position = position or "top"
-    local drawable, size = get_titlebar_function(c, position)(c)
+    position = position or "top"
+    local _, size = get_titlebar_function(c, position)(c)
     if size == 0 then
         titlebar.show(c, position)
     else
@@ -195,8 +211,8 @@ function titlebar.widget.button(c, name, selector, action)
     local ret = imagebox()
 
     if titlebar.enable_tooltip then
-        ret.tooltip = atooltip({ objects = {ret}, delay_show = 1 })
-        ret.tooltip:set_text(name)
+        ret._private.tooltip = atooltip({ objects = {ret}, delay_show = 1 })
+        ret._private.tooltip:set_text(name)
     end
 
     local function update()
@@ -238,11 +254,8 @@ function titlebar.widget.button(c, name, selector, action)
 
     -- We do magic based on whether a client is focused above, so we need to
     -- connect to the corresponding signal here.
-    local function focus_func(o)
-        if o == c then update() end
-    end
-    capi.client.connect_signal("focus", focus_func)
-    capi.client.connect_signal("unfocus", focus_func)
+    c:connect_signal("focus", update)
+    c:connect_signal("unfocus", update)
 
     return ret
 end
@@ -250,7 +263,7 @@ end
 --- Create a new float button for a client.
 -- @param c The client for which the button is wanted.
 function titlebar.widget.floatingbutton(c)
-    local widget = titlebar.widget.button(c, "floating", aclient.floating.get, aclient.floating.toggle)
+    local widget = titlebar.widget.button(c, "floating", aclient.object.get_floating, aclient.floating.toggle)
     c:connect_signal("property::floating", widget.update)
     return widget
 end
@@ -258,11 +271,11 @@ end
 --- Create a new maximize button for a client.
 -- @param c The client for which the button is wanted.
 function titlebar.widget.maximizedbutton(c)
-    local widget = titlebar.widget.button(c, "maximized", function(c)
-        return c.maximized_horizontal or c.maximized_vertical
-    end, function(c, state)
-        c.maximized_horizontal = not state
-        c.maximized_vertical = not state
+    local widget = titlebar.widget.button(c, "maximized", function(cl)
+        return cl.maximized_horizontal or cl.maximized_vertical
+    end, function(cl, state)
+        cl.maximized_horizontal = not state
+        cl.maximized_vertical = not state
     end)
     c:connect_signal("property::maximized_vertical", widget.update)
     c:connect_signal("property::maximized_horizontal", widget.update)
@@ -272,7 +285,7 @@ end
 --- Create a new minimize button for a client.
 -- @param c The client for which the button is wanted.
 function titlebar.widget.minimizebutton(c)
-    local widget = titlebar.widget.button(c, "minimize", function() return c.minimized end, function(c) c.minimized = not c.minimized end)
+    local widget = titlebar.widget.button(c, "minimize", function() return "" end, function(cl) cl.minimized = not cl.minimized end)
     c:connect_signal("property::minimized", widget.update)
     return widget
 end
@@ -280,13 +293,13 @@ end
 --- Create a new closing button for a client.
 -- @param c The client for which the button is wanted.
 function titlebar.widget.closebutton(c)
-    return titlebar.widget.button(c, "close", function() return "" end, function(c) c:kill() end)
+    return titlebar.widget.button(c, "close", function() return "" end, function(cl) cl:kill() end)
 end
 
 --- Create a new ontop button for a client.
 -- @param c The client for which the button is wanted.
 function titlebar.widget.ontopbutton(c)
-    local widget = titlebar.widget.button(c, "ontop", function(c) return c.ontop end, function(c, state) c.ontop = not state end)
+    local widget = titlebar.widget.button(c, "ontop", function(cl) return cl.ontop end, function(cl, state) cl.ontop = not state end)
     c:connect_signal("property::ontop", widget.update)
     return widget
 end
@@ -294,10 +307,14 @@ end
 --- Create a new sticky button for a client.
 -- @param c The client for which the button is wanted.
 function titlebar.widget.stickybutton(c)
-    local widget = titlebar.widget.button(c, "sticky", function(c) return c.sticky end, function(c, state) c.sticky = not state end)
+    local widget = titlebar.widget.button(c, "sticky", function(cl) return cl.sticky end, function(cl, state) cl.sticky = not state end)
     c:connect_signal("property::sticky", widget.update)
     return widget
 end
+
+client.connect_signal("unmanage", function(c)
+    all_titlebars[c] = nil
+end)
 
 return setmetatable(titlebar, { __call = function(_, ...) return new(...) end})
 

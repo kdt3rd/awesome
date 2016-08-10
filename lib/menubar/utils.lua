@@ -12,10 +12,14 @@ local io = io
 local table = table
 local ipairs = ipairs
 local string = string
+local screen = screen
 local awful_util = require("awful.util")
 local theme = require("beautiful")
-local glib = require("lgi").GLib
+local lgi = require("lgi")
+local gio = lgi.Gio
+local glib = lgi.GLib
 local wibox = require("wibox")
+local debug = require("gears.debug")
 
 local utils = {}
 
@@ -83,7 +87,7 @@ local function get_icon_lookup_path()
         table.insert(paths, 1, glib.get_user_data_dir())
         table.insert(paths, 1, glib.build_filenamev({glib.get_home_dir(),
                                                      '.icons'}))
-        for k,dir in ipairs(paths) do
+        for _,dir in ipairs(paths) do
             local icons_dir = glib.build_filenamev({dir, 'icons'})
             if awful_util.dir_readable(icons_dir) then
                 if icon_theme then
@@ -96,14 +100,14 @@ local function get_icon_lookup_path()
                                 glib.build_filenamev({icons_dir, 'hicolor'}))
             end
         end
-        for i, icon_theme_directory in ipairs(icon_theme_paths) do
-            for j, size in ipairs(all_icon_sizes) do
+        for _, icon_theme_directory in ipairs(icon_theme_paths) do
+            for _, size in ipairs(all_icon_sizes) do
                 add_if_readable(icon_lookup_path,
                                 glib.build_filenamev({icon_theme_directory,
                                                       size, 'apps'}))
             end
         end
-        for k,dir in ipairs(paths)do
+        for _,dir in ipairs(paths)do
             -- lowest priority fallbacks
             add_if_readable(icon_lookup_path,
                             glib.build_filenamev({dir, 'pixmaps'}))
@@ -127,7 +131,7 @@ function utils.lookup_icon_uncached(icon_file)
         -- supported, do not perform a lookup.
         return awful_util.file_readable(icon_file) and icon_file or nil
     else
-        for i, directory in ipairs(get_icon_lookup_path()) do
+        for _, directory in ipairs(get_icon_lookup_path()) do
             if is_format_supported(icon_file) and
                     awful_util.file_readable(directory .. "/" .. icon_file) then
                 return directory .. "/" .. icon_file
@@ -161,7 +165,7 @@ end
 --- Parse a .desktop file.
 -- @param file The .desktop file.
 -- @return A table with file entries.
-function utils.parse(file)
+function utils.parse_desktop_file(file)
     local program = { show = true, file = file }
     local desktop_entry = false
 
@@ -170,6 +174,7 @@ function utils.parse(file)
     for line in io.lines(file) do
         if line:find("^%s*#") then
             -- Skip comments.
+            (function() end)() -- I haven't found a nice way to silence luacheck here
         elseif not desktop_entry and line == "[Desktop Entry]" then
             desktop_entry = true
         else
@@ -239,34 +244,68 @@ function utils.parse(file)
     return program
 end
 
---- Parse a directory with .desktop files
--- @param dir The directory.
--- @return A table with all .desktop entries.
-function utils.parse_dir(dir)
-    local programs = {}
-    local files = io.popen('find '.. dir ..' -maxdepth 1 -name "*.desktop" 2>/dev/null')
-    for file in files:lines() do
-        local program = utils.parse(file)
-        if program then
-            table.insert(programs, program)
+--- Parse a directory with .desktop files recursively.
+-- @tparam string dir_path The directory path.
+-- @tparam function callback Will be fired when all the files were parsed
+-- with the resulting list of menu entries as argument.
+-- @tparam table callback.programs Paths of found .desktop files.
+function utils.parse_dir(dir_path, callback)
+
+    local function parser(dir, programs)
+        local f = gio.File.new_for_path(dir)
+        -- Except for "NONE" there is also NOFOLLOW_SYMLINKS
+        local query = gio.FILE_ATTRIBUTE_STANDARD_NAME .. "," .. gio.FILE_ATTRIBUTE_STANDARD_TYPE
+        local enum, err = f:async_enumerate_children(query, gio.FileQueryInfoFlags.NONE)
+        if not enum then
+            debug.print_error(err)
+            return
         end
+        local files_per_call = 100 -- Actual value is not that important
+        while true do
+            local list, enum_err = enum:async_next_files(files_per_call)
+            if enum_err then
+                debug.print_error(enum_err)
+                return
+            end
+            for _, info in ipairs(list) do
+                local file_type = info:get_file_type()
+                local file_path = enum:get_child(info):get_path()
+                if file_type == 'REGULAR' then
+                    local program = utils.parse_desktop_file(file_path)
+                    if program then
+                        table.insert(programs, program)
+                    end
+                elseif file_type == 'DIRECTORY' then
+                    parser(file_path, programs)
+                end
+            end
+            if #list == 0 then
+                break
+            end
+        end
+        enum:async_close()
     end
-    return programs
+
+    gio.Async.start(function()
+        local result = {}
+        parser(dir_path, result)
+        callback(result)
+    end)()
 end
 
 --- Compute textbox width.
 -- @tparam wibox.widget.textbox textbox Textbox instance.
--- @tparam number s Screen number
+-- @tparam number|screen s Screen
 -- @treturn int Text width.
 function utils.compute_textbox_width(textbox, s)
-    s = s or mouse.screen
-    local w, h = textbox:get_preferred_size(s)
+    s = screen[s or mouse.screen]
+    local w, _ = textbox:get_preferred_size(s)
     return w
 end
 
 --- Compute text width.
 -- @tparam str text Text.
--- @tparam number s Screen number
+-- @tparam number|screen s Screen
 -- @treturn int Text width.
 function utils.compute_text_width(text, s)
     return utils.compute_textbox_width(wibox.widget.textbox(awful_util.escape(text)), s)

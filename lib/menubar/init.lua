@@ -31,6 +31,10 @@ local common = require("awful.widget.common")
 local theme = require("beautiful")
 local wibox = require("wibox")
 
+local function get_screen(s)
+    return s and capi.screen[s]
+end
+
 -- menubar
 local menubar = { mt = {}, menu_entries = {} }
 menubar.menu_gen = require("menubar.menu_gen")
@@ -55,15 +59,18 @@ menubar.geometry = { width = nil,
                      height = nil,
                      x = nil,
                      y = nil }
-
 --- Width of blank space left in the right side.
-menubar.right_margin = 50
+menubar.right_margin = theme.xresources.apply_dpi(8)
 
 --- Label used for "Next page", default "▶▶".
 menubar.right_label = "▶▶"
 
 --- Label used for "Previous page", default "◀◀".
 menubar.left_label = "◀◀"
+
+-- awful.widget.common.list_update adds three times a margin of dpi(4)
+-- for each item:
+local list_interspace = theme.xresources.apply_dpi(4) * 3
 
 --- Allows user to specify custom parameters for prompt.run function
 -- (like colors).
@@ -94,9 +101,45 @@ end
 -- @return item name, item background color, background image, item icon.
 local function label(o)
     if o.focused then
-        return colortext(o.name, theme.fg_focus), theme.bg_focus, nil, o.icon
+        return colortext(o.name, (theme.menu_fg_focus or theme.fg_focus)), (theme.menu_bg_focus or theme.bg_focus), nil, o.icon
     else
-        return o.name, theme.bg_normal, nil, o.icon
+        return o.name, (theme.menu_bg_normal or theme.bg_normal), nil, o.icon
+    end
+end
+
+local function load_count_table()
+    local count_file_name = awful.util.getdir("cache") .. "/menu_count_file"
+
+    local count_file = io.open (count_file_name, "r")
+    local count_table = {}
+
+    -- read count file
+    if count_file then
+        io.input (count_file)
+        for line in io.lines() do
+            local name, count = string.match(line, "([^;]+);([^;]+)")
+            if name ~= nil and count ~= nil then
+                count_table[name] = count
+            end
+        end
+    end
+
+    return count_table
+end
+
+local function write_count_table(count_table)
+    local count_file_name = awful.util.getdir("cache") .. "/menu_count_file"
+
+    local count_file = io.open (count_file_name, "w")
+
+    if count_file then
+        io.output (count_file)
+
+        for name,count in pairs(count_table) do
+            local str = string.format("%s;%d\n", name, count)
+            io.write(str)
+        end
+        io.flush()
     end
 end
 
@@ -113,18 +156,34 @@ local function perform_action(o)
         return true, "", new_prompt
     elseif shownitems[current_item].cmdline then
         awful.spawn(shownitems[current_item].cmdline)
+
+        -- load count_table from cache file
+        local count_table = load_count_table()
+
+        -- increase count
+        local curname = shownitems[current_item].name
+        if count_table[curname] ~= nil then
+            count_table[curname] = count_table[curname] + 1
+        else
+            count_table[curname] = 1
+        end
+
+        -- write updated count table to cache file
+        write_count_table(count_table)
+
         -- Let awful.prompt execute dummy exec_callback and
         -- done_callback to stop the keygrabber properly.
         return false
     end
 end
 
---- Cut item list to return only current page.
+-- Cut item list to return only current page.
 -- @tparam table all_items All items list.
 -- @tparam str query Search query.
--- @tparam number scr Screen number
+-- @tparam number|screen scr Screen
 -- @return table List of items for current page.
 local function get_current_page(all_items, query, scr)
+    scr = get_screen(scr)
     if not instance.prompt.width then
         instance.prompt.width = compute_text_width(instance.prompt.prompt, scr)
     end
@@ -142,8 +201,8 @@ local function get_current_page(all_items, query, scr)
     local current_page = {}
     for i, item in ipairs(all_items) do
         item.width = item.width or
-            compute_text_width(" " .. item.name, scr) +
-            (item.icon and instance.geometry.height or 0)
+            compute_text_width(item.name, scr) +
+            (item.icon and instance.geometry.height or 0) + list_interspace
         if width_sum + item.width > available_space then
             if current_item < i then
                 table.insert(current_page, { name = menubar.right_label, icon = nil })
@@ -161,7 +220,7 @@ end
 
 --- Update the menubar according to the command entered by user.
 -- @tparam str query Search query.
--- @tparam number scr Screen number
+-- @tparam number|screen scr Screen
 local function menulist_update(query, scr)
     query = query or ""
     shownitems = {}
@@ -188,26 +247,38 @@ local function menulist_update(query, scr)
         end
     end
 
+    local count_table = load_count_table()
+    local command_list = {}
+
     -- Add the applications according to their name and cmdline
-    for i, v in ipairs(menubar.menu_entries) do
+    for _, v in ipairs(menubar.menu_entries) do
         v.focused = false
         if not current_category or v.category == current_category then
             if string.match(v.name, pattern)
                 or string.match(v.cmdline, pattern) then
                 if string.match(v.name, "^" .. pattern)
                     or string.match(v.cmdline, "^" .. pattern) then
-                    table.insert(shownitems, v)
-                else
-                    table.insert(match_inside, v)
+
+                    v.count = 0
+                    -- use count from count_table if present
+                    if string.len(pattern) > 0 and count_table[v.name] ~= nil then
+                        v.count = tonumber(count_table[v.name])
+                    end
+
+                    table.insert (command_list, v)
                 end
             end
         end
     end
 
-    -- Now add items from match_inside to shownitems
-    for i, v in ipairs(match_inside) do
-        table.insert(shownitems, v)
+    local function compare_counts(a,b)
+        return a.count > b.count
     end
+
+    -- sort command_list by count (highest first)
+    table.sort(command_list, compare_counts)
+    -- copy into showitems
+    shownitems = command_list
 
     if #shownitems > 0 then
         -- Insert a run item value as the last choice
@@ -227,9 +298,10 @@ local function menulist_update(query, scr)
 end
 
 --- Create the menubar wibox and widgets.
-local function initialize()
+-- @tparam[opt] screen scr Screen.
+local function initialize(scr)
     instance.wibox = wibox({})
-    instance.widget = menubar.get()
+    instance.widget = menubar.get(scr)
     instance.wibox.ontop = true
     instance.prompt = awful.widget.prompt()
     local layout = wibox.layout.fixed.horizontal()
@@ -239,8 +311,12 @@ local function initialize()
 end
 
 --- Refresh menubar's cache by reloading .desktop files.
-function menubar.refresh()
-    menubar.menu_entries = menubar.menu_gen.generate()
+-- @tparam[opt] screen scr Screen.
+function menubar.refresh(scr)
+    menubar.menu_gen.generate(function(entries)
+        menubar.menu_entries = entries
+        menulist_update(nil, scr)
+    end)
 end
 
 --- Awful.prompt keypressed callback to be used when the user presses a key.
@@ -288,18 +364,19 @@ local function prompt_keypressed_callback(mod, key, comm)
 end
 
 --- Show the menubar on the given screen.
--- @param scr Screen number.
+-- @param scr Screen.
 function menubar.show(scr)
     if not instance.wibox then
-        initialize()
+        initialize(scr)
     elseif instance.wibox.visible then -- Menu already shown, exit
         return
     elseif not menubar.cache_entries then
-        menubar.refresh()
+        menubar.refresh(scr)
     end
 
     -- Set position and size
     scr = scr or awful.screen.focused() or 1
+    scr = get_screen(scr)
     local scrgeom = capi.screen[scr].workarea
     local geometry = menubar.geometry
     instance.geometry = {x = geometry.x or scrgeom.x,
@@ -315,7 +392,7 @@ function menubar.show(scr)
     local prompt_args = menubar.prompt_args or {}
     prompt_args.prompt = "Run: "
     awful.prompt.run(prompt_args, instance.prompt.widget,
-                function(s) end,            -- exe_callback function set to do nothing
+                function() end,            -- exe_callback function set to do nothing
                 awful.completion.shell,     -- completion_callback
                 awful.util.get_cache_dir() .. "/history_menu",
                 nil,
@@ -331,9 +408,10 @@ function menubar.hide()
 end
 
 --- Get a menubar wibox.
+-- @tparam[opt] screen scr Screen.
 -- @return menubar wibox.
-function menubar.get()
-    menubar.refresh()
+function menubar.get(scr)
+    menubar.refresh(scr)
     -- Add to each category the name of its key in all_categories
     for k, v in pairs(menubar.menu_gen.all_categories) do
         v.key = k
@@ -341,7 +419,7 @@ function menubar.get()
     return common_args.w
 end
 
-function menubar.mt:__call(...)
+function menubar.mt.__call(_, ...)
     return menubar.get(...)
 end
 

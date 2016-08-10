@@ -10,7 +10,6 @@
 -- Grab environment we need
 local ipairs = ipairs
 local math = math
-local tag = require("awful.tag")
 local capi =
 {
     client = client,
@@ -18,7 +17,6 @@ local capi =
     mouse = mouse,
     mousegrabber = mousegrabber
 }
-local client = require("awful.client")
 
 local magnifier = {}
 
@@ -32,7 +30,9 @@ function magnifier.mouse_resize_handler(c, corner, x, y)
 
     local prev_coords = {}
     capi.mousegrabber.run(function (_mouse)
-                              for k, v in ipairs(_mouse.buttons) do
+                              if not c.valid then return false end
+
+                              for _, v in ipairs(_mouse.buttons) do
                                   if v then
                                       prev_coords = { x =_mouse.x, y = _mouse.y }
                                       local dx = center_x - _mouse.x
@@ -41,7 +41,8 @@ function magnifier.mouse_resize_handler(c, corner, x, y)
 
                                       -- New master width factor
                                       local mwfact = dist / maxdist_pow
-                                      tag.setmwfact(math.min(math.max(0.01, mwfact), 0.99), tag.selected(c.screen))
+                                      c.screen.selected_tag.master_width_factor
+                                        = math.min(math.max(0.01, mwfact), 0.99)
                                       return true
                                   end
                               end
@@ -54,8 +55,8 @@ function magnifier.arrange(p)
     local area = p.workarea
     local cls = p.clients
     local focus = p.focus or capi.client.focus
-    local t = p.tag or tag.selected(p.screen)
-    local mwfact = tag.getmwfact(t)
+    local t = p.tag or capi.screen[p.screen].selected_tag
+    local mwfact = t.master_width_factor
     local fidx
 
     -- Check that the focused window is on the right screen
@@ -67,7 +68,7 @@ function magnifier.arrange(p)
     end
 
     -- If focused window is not tiled, take the first one which is tiled.
-    if client.floating.get(focus) then
+    if focus.floating then
         focus = cls[1]
         fidx = 1
     end
@@ -126,13 +127,12 @@ function magnifier.arrange(p)
         -- Then move clients that are after focused client.
         -- So the next focused window will be the one at the top of the screen.
         for k = 1, fidx - 1 do
-            local g = {
+            p.geometries[cls[k]] = {
                 x = geometry.x,
                 y = geometry.y,
                 width = geometry.width,
                 height = geometry.height
             }
-            p.geometries[cls[k]] = g
             geometry.y = geometry.y + geometry.height
         end
     end

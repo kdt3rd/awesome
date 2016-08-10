@@ -10,7 +10,7 @@
 -- How to create a tooltip?
 -- ---
 --
---     myclock = awful.widget.textclock({}, "%T", 1)
+--     myclock = wibox.widget.textclock({}, "%T", 1)
 --     myclock_t = awful.tooltip({
 --         objects = { myclock },
 --         timer_function = function()
@@ -18,7 +18,7 @@
 --             end,
 --         })
 --
--- How to add the same tooltip to several objects?
+-- How to add the same tooltip to multiple objects?
 -- ---
 --
 --     myclock_t:add_to_object(obj1)
@@ -26,7 +26,7 @@
 --
 -- Now the same tooltip is attached to `myclock`, `obj1`, `obj2`.
 --
--- How to remove tooltip from many objects?
+-- How to remove a tooltip from several objects?
 -- ---
 --
 --     myclock_t:remove_from_object(obj1)
@@ -41,14 +41,14 @@
 -------------------------------------------------------------------------
 
 local mouse = mouse
-local screen = screen
 local timer = require("gears.timer")
+local object = require("gears.object")
 local wibox = require("wibox")
 local a_placement = require("awful.placement")
 local abutton = require("awful.button")
 local beautiful = require("beautiful")
 local textbox = require("wibox.widget.textbox")
-local background = require("wibox.widget.background")
+local background = require("wibox.container.background")
 local dpi = require("beautiful").xresources.apply_dpi
 local setmetatable = setmetatable
 local ipairs = ipairs
@@ -59,25 +59,32 @@ local ipairs = ipairs
 -- @tfield boolean visible True if tooltip is visible.
 local tooltip = { mt = {}  }
 
--- Place the tooltip on the screen.
--- @tparam tooltip self A tooltip object.
-local function place(self)
-    a_placement.next_to_mouse(self.wibox)
-    a_placement.no_offscreen(self.wibox, mouse.screen)
+local instance_mt = {}
+
+function instance_mt:__index(key)
+    if key == "wibox" then
+        local wb = wibox(self.wibox_properties)
+        wb:set_widget(self.marginbox)
+
+        -- Close the tooltip when clicking it.  This gets done on release, to not
+        -- emit the release event on an underlying object, e.g. the titlebar icon.
+        wb:buttons(abutton({}, 1, nil, self.hide))
+        rawset(self, "wibox", wb)
+        return wb
+    end
 end
 
 -- Place the tooltip under the mouse.
 --
 -- @tparam tooltip self A tooltip object.
 local function set_geometry(self)
-    local my_geo = self.wibox:geometry()
     -- calculate width / height
     local n_w, n_h = self.textbox:get_preferred_size(mouse.screen)
     n_w = n_w + self.marginbox.left + self.marginbox.right
     n_h = n_h + self.marginbox.top + self.marginbox.bottom
-    if my_geo.width ~= n_w or my_geo.height ~= n_h then
-        self.wibox:geometry({ width = n_w, height = n_h })
-    end
+    self.wibox:geometry({ width = n_w, height = n_h })
+    a_placement.next_to_mouse(self.wibox)
+    a_placement.no_offscreen(self.wibox, mouse.screen)
 end
 
 -- Show a tooltip.
@@ -88,14 +95,14 @@ local function show(self)
     if self.visible then return end
     if self.timer then
         if not self.timer.started then
-            self.timer_function()
+            self:timer_function()
             self.timer:start()
         end
     end
     set_geometry(self)
-    place(self)
     self.wibox.visible = true
     self.visible = true
+    self:emit_signal("property::visible")
 end
 
 -- Hide a tooltip.
@@ -109,8 +116,9 @@ local function hide(self)
             self.timer:stop()
         end
     end
-    self.visible = false
     self.wibox.visible = false
+    self.visible = false
+    self:emit_signal("property::visible")
 end
 
 --- Change displayed text.
@@ -150,31 +158,32 @@ end
 --- Add tooltip to an object.
 --
 -- @tparam tooltip self The tooltip.
--- @tparam gears.object object An object with `mouse::enter` and
+-- @tparam gears.object obj An object with `mouse::enter` and
 --   `mouse::leave` signals.
-tooltip.add_to_object = function(self, object)
-    object:connect_signal("mouse::enter", self.show)
-    object:connect_signal("mouse::leave", self.hide)
+tooltip.add_to_object = function(self, obj)
+    obj:connect_signal("mouse::enter", self.show)
+    obj:connect_signal("mouse::leave", self.hide)
 end
 
 --- Remove tooltip from an object.
 --
 -- @tparam tooltip self The tooltip.
--- @tparam gears.object object An object with `mouse::enter` and
+-- @tparam gears.object obj An object with `mouse::enter` and
 --   `mouse::leave` signals.
-tooltip.remove_from_object = function(self, object)
-    object:disconnect_signal("mouse::enter", self.show)
-    object:disconnect_signal("mouse::leave", self.hide)
+tooltip.remove_from_object = function(self, obj)
+    obj:disconnect_signal("mouse::enter", self.show)
+    obj:disconnect_signal("mouse::leave", self.hide)
 end
 
 
 --- Create a new tooltip and link it to a widget.
+-- Tooltips emit `property::visible` when their visibility changes.
 -- @tparam table args Arguments for tooltip creation.
--- @tparam[opt=1] number args.timeout The timeout value for
---   `timer_function`.
 -- @tparam function args.timer_function A function to dynamically set the
 --   tooltip text.  Its return value will be passed to
 --   `wibox.widget.textbox.set_markup`.
+-- @tparam[opt=1] number args.timeout The timeout value for
+--   `timer_function`.
 -- @tparam[opt] table args.objects A list of objects linked to the tooltip.
 -- @tparam[opt] number args.delay_show Delay showing the tooltip by this many
 --   seconds.
@@ -186,10 +195,8 @@ end
 -- @see set_text
 -- @see set_markup
 tooltip.new = function(args)
-    local self = {
-        wibox =  wibox({ }),
-        visible = false,
-    }
+    local self = setmetatable(object(), instance_mt)
+    self.visible = false
 
     -- private data
     if args.delay_show then
@@ -238,17 +245,17 @@ tooltip.new = function(args)
     end
 
     -- Set default properties
-    self.wibox.border_width = beautiful.tooltip_border_width or beautiful.border_width or 1
-    self.wibox.border_color = beautiful.tooltip_border_color or beautiful.border_normal or "#ffcb60"
-    self.wibox.opacity = beautiful.tooltip_opacity or 1
-    self.wibox:set_bg(beautiful.tooltip_bg_color or beautiful.bg_focus or "#ffcb60")
+    self.wibox_properties = {
+        visible = false,
+        ontop = true,
+        border_width = beautiful.tooltip_border_width or beautiful.border_width or 1,
+        border_color = beautiful.tooltip_border_color or beautiful.border_normal or "#ffcb60",
+        opacity = beautiful.tooltip_opacity or 1,
+        bg = beautiful.tooltip_bg_color or beautiful.bg_focus or "#ffcb60"
+    }
     local fg = beautiful.tooltip_fg_color or beautiful.fg_focus or "#000000"
     local font = beautiful.tooltip_font or beautiful.font or "terminus 6"
 
-    -- set tooltip properties
-    self.wibox.visible = false
-    -- Who wants a non ontop tooltip ?
-    self.wibox.ontop = true
     self.textbox = textbox()
     self.textbox:set_font(font)
     self.background = background(self.textbox)
@@ -257,21 +264,12 @@ tooltip.new = function(args)
     -- Add margin.
     local m_lr = args.margin_leftright or dpi(5)
     local m_tb = args.margin_topbottom or dpi(3)
-    self.marginbox = wibox.layout.margin(self.background, m_lr, m_lr, m_tb, m_tb)
-    self.wibox:set_widget(self.marginbox)
-
-    -- Close the tooltip when clicking it.  This gets done on release, to not
-    -- emit the release event on an underlying object, e.g. the titlebar icon.
-    self.wibox:buttons(abutton({}, 1, nil, function() self.hide() end))
-
-    -- Re-place when the geometry of the wibox changes.
-    self.wibox:connect_signal("property::width",  function() place(self) end)
-    self.wibox:connect_signal("property::height", function() place(self) end)
+    self.marginbox = wibox.container.margin(self.background, m_lr, m_lr, m_tb, m_tb)
 
     -- Add tooltip to objects
     if args.objects then
-        for _, object in ipairs(args.objects) do
-            self:add_to_object(object)
+        for _, obj in ipairs(args.objects) do
+            self:add_to_object(obj)
         end
     end
 

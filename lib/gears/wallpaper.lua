@@ -9,26 +9,16 @@ local cairo = require("lgi").cairo
 local color = require("gears.color")
 local surface = require("gears.surface")
 local timer = require("gears.timer")
+local root = root
 
 local wallpaper = { mt = {} }
 
--- The size of the root window
-local root_geom
-do
-    local geom = screen[1].geometry
-    root_geom = {
-        x = 0, y = 0,
-        width = geom.x + geom.width,
-        height = geom.y + geom.height
-    }
-    for s = 1, screen.count() do
-        local g = screen[s].geometry
-        root_geom.width = math.max(root_geom.width, g.x + g.width)
-        root_geom.height = math.max(root_geom.height, g.y + g.height)
-    end
+local function root_geometry()
+    local width, height = root.size()
+    return { x = 0, y = 0, width = width, height = height }
 end
 
--- A cairo surface that we still want to set as the wallpaper
+-- Information about a pending wallpaper change, see prepare_context()
 local pending_wallpaper = nil
 
 --- Prepare the needed state for setting a wallpaper.
@@ -39,33 +29,48 @@ local pending_wallpaper = nil
 -- @return[1] The available geometry (table with entries width and height)
 -- @return[1] A cairo context that the wallpaper should be drawn to
 function wallpaper.prepare_context(s)
-    local geom = s and screen[s].geometry or root_geom
-    local cr
+    local root_width, root_height = root.size()
+    local geom = s and screen[s].geometry or root_geometry()
+    local source, target, cr
 
     if not pending_wallpaper then
         -- Prepare a pending wallpaper
-        local wp = surface(root.wallpaper())
-
-        pending_wallpaper = wp:create_similar(cairo.Content.COLOR, root_geom.width, root_geom.height)
-
-        -- Copy the old wallpaper to the new one
-        cr = cairo.Context(pending_wallpaper)
-        cr:save()
-        cr.operator = cairo.Operator.SOURCE
-        cr:set_source_surface(wp, 0, 0)
-        cr:paint()
-        cr:restore()
+        source = surface(root.wallpaper())
+        target = source:create_similar(cairo.Content.COLOR, root_width, root_height)
 
         -- Set the wallpaper (delayed)
         timer.delayed_call(function()
-            local wp = pending_wallpaper
+            local paper = pending_wallpaper
             pending_wallpaper = nil
-            wallpaper.set(wp)
+            wallpaper.set(paper.surface)
+            paper.surface:finish()
         end)
+    elseif root_width > pending_wallpaper.width or root_height > pending_wallpaper.height then
+        -- The root window was resized while a wallpaper is pending
+        source = pending_wallpaper.surface
+        target = source:create_similar(cairo.Content.COLOR, root_width, root_height)
     else
         -- Draw to the already-pending wallpaper
-        cr = cairo.Context(pending_wallpaper)
+        source = nil
+        target = pending_wallpaper.surface
     end
+
+    cr = cairo.Context(target)
+
+    if source then
+        -- Copy the old wallpaper to the new one
+        cr:save()
+        cr.operator = cairo.Operator.SOURCE
+        cr:set_source_surface(source, 0, 0)
+        cr:paint()
+        cr:restore()
+    end
+
+    pending_wallpaper = {
+        surface = target,
+        width = root_width,
+        height = root_height
+    }
 
     -- Only draw to the selected area
     cr:translate(geom.x, geom.y)
@@ -99,8 +104,8 @@ end
 --   gears.color. The default is black.
 function wallpaper.centered(surf, s, background)
     local geom, cr = wallpaper.prepare_context(s)
-    local surf = surface(surf)
-    local background = color(background)
+    surf = surface.load_uncached(surf)
+    background = color(background)
 
     -- Fill the area with the background
     cr.operator = cairo.Operator.SOURCE
@@ -114,6 +119,7 @@ function wallpaper.centered(surf, s, background)
     cr:clip()
     cr:set_source_surface(surf, 0, 0)
     cr:paint()
+    surf:finish()
 end
 
 --- Set a tiled wallpaper.
@@ -122,17 +128,19 @@ end
 --   all screens are set.
 -- @param offset This can be set to a table with entries x and y.
 function wallpaper.tiled(surf, s, offset)
-    local geom, cr = wallpaper.prepare_context(s)
+    local _, cr = wallpaper.prepare_context(s)
 
     if offset then
         cr:translate(offset.x, offset.y)
     end
 
-    local pattern = cairo.Pattern.create_for_surface(surface(surf))
+    surf = surface.load_uncached(surf)
+    local pattern = cairo.Pattern.create_for_surface(surf)
     pattern.extend = cairo.Extend.REPEAT
     cr.source = pattern
     cr.operator = cairo.Operator.SOURCE
     cr:paint()
+    surf:finish()
 end
 
 --- Set a maximized wallpaper.
@@ -144,7 +152,7 @@ end
 -- @param offset This can be set to a table with entries x and y.
 function wallpaper.maximized(surf, s, ignore_aspect, offset)
     local geom, cr = wallpaper.prepare_context(s)
-    local surf = surface(surf)
+    surf = surface.load_uncached(surf)
     local w, h = surface.get_size(surf)
     local aspect_w = geom.width / w
     local aspect_h = geom.height / h
@@ -166,6 +174,7 @@ function wallpaper.maximized(surf, s, ignore_aspect, offset)
     cr:set_source_surface(surf, 0, 0)
     cr.operator = cairo.Operator.SOURCE
     cr:paint()
+    surf:finish()
 end
 
 --- Set a fitting wallpaper.
@@ -176,8 +185,8 @@ end
 --   gears.color. The default is black.
 function wallpaper.fit(surf, s, background)
     local geom, cr = wallpaper.prepare_context(s)
-    local surf = surface(surf)
-    local background = color(background)
+    surf = surface.load_uncached(surf)
+    background = color(background)
 
     -- Fill the area with the background
     cr.operator = cairo.Operator.SOURCE
@@ -196,6 +205,7 @@ function wallpaper.fit(surf, s, background)
     cr:scale(scale, scale)
     cr:set_source_surface(surf, 0, 0)
     cr:paint()
+    surf:finish()
 end
 
 return wallpaper

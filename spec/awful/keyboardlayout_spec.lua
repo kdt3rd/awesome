@@ -3,11 +3,6 @@
 -- @copyright 2015 Uli Schlachter and Kazunobu Kuriyama
 ---------------------------------------------------------------------------
 
--- Hack so that beautiful can be loaded
-_G.awesome = {
-    xrdb_get_value = function() end
-}
-
 local kb = require("awful.widget.keyboardlayout")
 
 describe("awful.widget.keyboardlayout get_groups_from_group_names", function()
@@ -27,6 +22,9 @@ describe("awful.widget.keyboardlayout get_groups_from_group_names", function()
         ["pc()+de+jp+group()"] = {
             { file = "de", group_idx = 1 },
             { file = "jp", group_idx = 1 }
+        },
+        ["us(altgr-intl)"] = {
+            { file = "us", group_idx = 1, section = "altgr-intl" }
         },
         -- possible eight variations of a single term
         ["de"] = {

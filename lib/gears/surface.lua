@@ -9,7 +9,9 @@ local setmetatable = setmetatable
 local type = type
 local capi = { awesome = awesome }
 local cairo = require("lgi").cairo
+local color = nil
 local gdebug = require("gears.debug")
+local hierarchy = require("wibox.hierarchy")
 
 -- Keep this in sync with build-utils/lgi-check.sh!
 local ver_major, ver_minor, ver_patch = string.match(require('lgi.version'), '(%d)%.(%d)%.(%d)')
@@ -40,8 +42,6 @@ function surface.load_uncached_silently(_surface, default)
     if not _surface then
         return get_default(default)
     end
-    -- Remove from cache if it was cached
-    surface_cache[_surface] = nil
     -- lgi cairo surfaces don't get changed either
     if cairo.Surface:is_type_of(_surface) then
         return _surface
@@ -56,12 +56,7 @@ function surface.load_uncached_silently(_surface, default)
         end
     end
     -- Everything else gets forced into a surface
-    _surface = cairo.Surface(_surface, true)
-    -- If we loaded a file, cache it
-    if file then
-        surface_cache[file] = _surface
-    end
-    return _surface
+    return cairo.Surface(_surface, true)
 end
 
 --- Try to convert the argument into an lgi cairo surface.
@@ -79,6 +74,12 @@ function surface.load_silently(_surface, default)
         if cache then
             return cache
         end
+        local result, err = surface.load_uncached_silently(_surface, default)
+        if not err then
+            -- Cache the file
+            surface_cache[_surface] = result
+        end
+        return result, err
     end
     return surface.load_uncached_silently(_surface, default)
 end
@@ -91,7 +92,8 @@ local function do_load_and_handle_errors(_surface, func)
     if result then
         return result
     end
-    gdebug.print_error("Failed to load '" .. tostring(_surface) .. "': " .. tostring(err))
+    gdebug.print_error(debug.traceback(
+        "Failed to load '" .. tostring(_surface) .. "': " .. tostring(err)))
     return get_default()
 end
 
@@ -113,7 +115,7 @@ function surface.load(_surface)
     return do_load_and_handle_errors(_surface, surface.load_silently)
 end
 
-function surface.mt:__call(...)
+function surface.mt.__call(_, ...)
     return surface.load(...)
 end
 
@@ -152,6 +154,32 @@ function surface.duplicate_surface(s)
     return result
 end
 
+--- Create a surface from a `gears.shape`
+-- Any additional parameters will be passed to the shape function
+-- @tparam number width The surface width
+-- @tparam number height The surface height
+-- @param shape A `gears.shape` compatible function
+-- @param[opt=white] shape_color The shape color or pattern
+-- @param[opt=transparent] bg_color The surface background color
+-- @treturn cairo.surface the new surface
+function surface.load_from_shape(width, height, shape, shape_color, bg_color, ...)
+    color = color or require("gears.color")
+
+    local img = cairo.ImageSurface(cairo.Format.ARGB32, width, height)
+    local cr = cairo.Context(img)
+
+    cr:set_source(color(bg_color or "#00000000"))
+    cr:paint()
+
+    cr:set_source(color(shape_color or "#000000"))
+
+    shape(cr, width, height, ...)
+
+    cr:fill()
+
+    return img
+end
+
 --- Apply a shape to a client or a wibox.
 --
 --  If the wibox or client size change, this function need to be called
@@ -177,6 +205,53 @@ function surface.apply_shape_bounding(draw, shape, ...)
   cr:fill()
 
   draw.shape_bounding = img._native
+end
+
+local function no_op() end
+
+local function run_in_hierarchy(self, cr, width, height)
+
+    local function redraw(h)
+        h:draw({dpi=96}, cr)
+    end
+
+    local h = hierarchy.new({dpi=96}, self, width, height, redraw, no_op, {})
+
+    redraw(h)
+
+    return h
+end
+
+--- Create an SVG file with this widget content.
+-- This is dynamic, so the SVG will be updated along with the widget content.
+-- because of this, the painting may happen hover multiple event loop cycles.
+-- @tparam widget widget A widget
+-- @tparam string path The output file path
+-- @tparam number width The surface width
+-- @tparam number height The surface height
+-- @return The cairo surface
+-- @return The hierarchy
+function surface.widget_to_svg(widget, path, width, height)
+    local img = cairo.SvgSurface.create(path, width, height)
+    local cr = cairo.Context(img)
+
+    return img, run_in_hierarchy(widget, cr, width, height)
+end
+
+--- Create a cairo surface with this widget content.
+-- This is dynamic, so the SVG will be updated along with the widget content.
+-- because of this, the painting may happen hover multiple event loop cycles.
+-- @tparam widget widget A widget
+-- @tparam number width The surface width
+-- @tparam number height The surface height
+-- @param[opt=cairo.Format.ARGB32] format The surface format
+-- @return The cairo surface
+-- @return The hierarchy
+function surface.widget_to_surface(widget, width, height, format)
+    local img = cairo.ImageSurface(format or cairo.Format.ARGB32, width, height)
+    local cr = cairo.Context(img)
+
+    return img, run_in_hierarchy(widget, cr, width, height)
 end
 
 return setmetatable(surface, surface.mt)

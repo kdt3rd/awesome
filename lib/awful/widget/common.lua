@@ -6,17 +6,10 @@
 ---------------------------------------------------------------------------
 
 -- Grab environment we need
-local math = math
 local type = type
 local ipairs = ipairs
-local pairs = pairs
-local pcall = pcall
-local setmetatable = setmetatable
 local capi = { button = button }
-local util = require("awful.util")
 local wibox = require("wibox")
-local imagebox = require("wibox.widget.imagebox")
-local textbox = require("wibox.widget.textbox")
 local dpi = require("beautiful").xresources.apply_dpi
 
 --- Common utilities for awful widgets
@@ -29,9 +22,9 @@ local common = {}
 function common.create_buttons(buttons, object)
     if buttons then
         local btns = {}
-        for kb, b in ipairs(buttons) do
+        for _, b in ipairs(buttons) do
             -- Create a proxy button object: it will receive the real
-            -- press and release events, and will propagate them the the
+            -- press and release events, and will propagate them to the
             -- button object the user provided, but with the object as
             -- argument.
             local btn = capi.button { modifiers = b.modifiers, button = b.button }
@@ -67,9 +60,9 @@ function common.list_update(w, buttons, label, data, objects)
         else
             ib = wibox.widget.imagebox()
             tb = wibox.widget.textbox()
-            bgb = wibox.widget.background()
-            tbm = wibox.layout.margin(tb, dpi(4), dpi(4))
-            ibm = wibox.layout.margin(ib, dpi(4))
+            bgb = wibox.container.background()
+            tbm = wibox.container.margin(tb, dpi(4), dpi(4))
+            ibm = wibox.container.margin(ib, dpi(4))
             l = wibox.layout.fixed.horizontal()
 
             -- All of this is added in a fixed widget
@@ -102,7 +95,8 @@ function common.list_update(w, buttons, label, data, objects)
         end
         bgb:set_bg(bg)
         if type(bg_image) == "function" then
-            bg_image = bg_image(tb,o,m,objects,i)
+            -- TODO: Why does this pass nil as an argument?
+            bg_image = bg_image(tb,o,nil,objects,i)
         end
         bgb:set_bgimage(bg_image)
         if icon then

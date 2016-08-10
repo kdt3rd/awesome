@@ -8,26 +8,29 @@
 ---------------------------------------------------------------------------
 
 local setmetatable = setmetatable
-local ipairs = ipairs
-local button = require("awful.button")
+local capi = { screen = screen, tag = tag }
 local layout = require("awful.layout")
 local tooltip = require("awful.tooltip")
-local tag = require("awful.tag")
 local beautiful = require("beautiful")
 local imagebox = require("wibox.widget.imagebox")
+
+local function get_screen(s)
+    return s and capi.screen[s]
+end
 
 local layoutbox = { mt = {} }
 
 local boxes = nil
 
 local function update(w, screen)
-    local layout = layout.getname(layout.get(screen))
-    w._layoutbox_tooltip:set_text(layout or "[no name]")
-    w:set_image(layout and beautiful["layout_" .. layout])
+    screen = get_screen(screen)
+    local name = layout.getname(layout.get(screen))
+    w._layoutbox_tooltip:set_text(name or "[no name]")
+    w:set_image(name and beautiful["layout_" .. name])
 end
 
 local function update_from_tag(t)
-    local screen = tag.getscreen(t)
+    local screen = get_screen(t.screen)
     local w = boxes[screen]
     if w then
         update(w, screen)
@@ -39,13 +42,13 @@ end
 -- @param screen The screen number that the layout will be represented for.
 -- @return An imagebox widget configured as a layoutbox.
 function layoutbox.new(screen)
-    local screen = screen or 1
+    screen = get_screen(screen or 1)
 
     -- Do we already have the update callbacks registered?
     if boxes == nil then
-        boxes = setmetatable({}, { __mode = "v" })
-        tag.attached_connect_signal(nil, "property::selected", update_from_tag)
-        tag.attached_connect_signal(nil, "property::layout", update_from_tag)
+        boxes = setmetatable({}, { __mode = "kv" })
+        capi.tag.connect_signal("property::selected", update_from_tag)
+        capi.tag.connect_signal("property::layout", update_from_tag)
         layoutbox.boxes = boxes
     end
 
@@ -53,7 +56,7 @@ function layoutbox.new(screen)
     local w = boxes[screen]
     if not w then
         w = imagebox()
-        w._layoutbox_tooltip = tooltip({ objects = {w}, delay_show = 1 })
+        w._layoutbox_tooltip = tooltip {objects = {w}, delay_show = 1}
 
         update(w, screen)
         boxes[screen] = w

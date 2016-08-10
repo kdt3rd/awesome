@@ -20,13 +20,13 @@ local beautiful = require("beautiful")
 local dpi = require("beautiful").xresources.apply_dpi
 local object = require("gears.object")
 local surface = require("gears.surface")
+local protected_call = require("gears.protected_call")
 local cairo = require("lgi").cairo
 local setmetatable = setmetatable
 local tonumber = tonumber
 local string = string
 local ipairs = ipairs
 local pairs = pairs
-local pcall = pcall
 local print = print
 local table = table
 local type = type
@@ -99,7 +99,7 @@ end
 
 
 local function item_position(_menu, child)
-    local in_dir, other, a, b = 0, 0, "height", "width"
+    local a, b = "height", "width"
     local dir = _menu.layout.dir or "y"
     if dir == "x" then  a, b = b, a  end
 
@@ -120,8 +120,8 @@ local function item_position(_menu, child)
 end
 
 
-local function set_coords(_menu, screen_idx, m_coords)
-    local s_geometry = capi.screen[screen_idx].workarea
+local function set_coords(_menu, s, m_coords)
+    local s_geometry = s.workarea
     local screen_w = s_geometry.x + s_geometry.width
     local screen_h = s_geometry.y + s_geometry.height
 
@@ -191,7 +191,7 @@ local function check_access_key(_menu, key)
 end
 
 
-local function grabber(_menu, mod, key, event)
+local function grabber(_menu, _, key, event)
     if event ~= "press" then return end
 
     local sel = _menu.sel or 0
@@ -249,7 +249,7 @@ function menu:exec(num, opts)
             self.active_child:hide()
         end
         self.active_child = self.child[num]
-        if not self.active_child.visible then
+        if not self.active_child.wibox.visible then
             self.active_child:show()
         end
     elseif type(cmd) == "string" then
@@ -313,10 +313,10 @@ end
 function menu:show(args)
     args = args or {}
     local coords = args.coords or nil
-    local screen_index = screen.focused()
+    local s = capi.screen[screen.focused()]
 
     if not set_size(self) then return end
-    set_coords(self, screen_index, coords)
+    set_coords(self, s, coords)
 
     keygrabber.run(self._keygrabber)
     self.wibox.visible = true
@@ -374,12 +374,8 @@ function menu:add(args, index)
     local theme = load_theme(args.theme or {}, self.theme)
     args.theme = theme
     args.new = args.new or menu.entry
-    local success, item = pcall(args.new, self, args)
-    if not success then
-        print("Error while creating menu entry: " .. item)
-        return
-    end
-    if not item.widget then
+    local item = protected_call(args.new, self, args)
+    if (not item) or (not item.widget) then
         print("Error while checking menu entry: no property widget found.")
         return
     end
@@ -388,7 +384,7 @@ function menu:add(args, index)
     item.width = item.width or theme.width
     item.height = item.height or theme.height
     wibox.widget.base.check_widget(item.widget)
-    item._background = wibox.widget.background()
+    item._background = wibox.container.background()
     item._background:set_widget(item.widget)
     item._background:set_fg(item.theme.fg_normal)
     item._background:set_bg(item.theme.bg_normal)
@@ -435,7 +431,7 @@ function menu:delete(num)
     local item = self.items[num]
     if not item then return end
     item.widget:disconnect_signal("mouse::enter", item._mouse)
-    item.widget.visible = false
+    item.widget:set_visible(false)
     table.remove(self.items, num)
     if self.sel == num then
         self:item_leave(self.sel)
@@ -499,10 +495,10 @@ end
 --------------------------------------------------------------------------------
 
 --- Default awful.menu.entry constructor
--- @param parent The parent menu
+-- @param parent The parent menu (TODO: This is apparently unused)
 -- @param args the item params
 -- @return table with 'widget', 'cmd', 'akey' and all the properties the user wants to change
-function menu.entry(parent, args)
+function menu.entry(parent, args) -- luacheck: no unused args
     args = args or {}
     args.text = args[1] or args.text or ""
     args.cmd = args[2] or args.cmd
@@ -520,7 +516,7 @@ function menu.entry(parent, args)
         end, 1))
     -- Set icon if needed
     local icon, iconbox
-    local margin = wibox.layout.margin()
+    local margin = wibox.container.margin()
     margin:set_widget(label)
     if args.icon then
         icon = surface.load(args.icon)
@@ -613,7 +609,7 @@ end
 --       terms[i] =
 --         {c.name,
 --          function()
---            awful.tag.viewonly(c.first_tag)
+--            c.first_tag:view_only()
 --            client.focus = c
 --          end,
 --          c.icon
@@ -651,9 +647,9 @@ function menu.new(args, parent)
     end
 
     -- Create items
-    for i, v in ipairs(args) do  _menu:add(v)  end
+    for _, v in ipairs(args) do  _menu:add(v)  end
     if args.items then
-        for i, v in pairs(args.items) do  _menu:add(v)  end
+        for _, v in pairs(args.items) do  _menu:add(v)  end
     end
 
     _menu._keygrabber = function (...)

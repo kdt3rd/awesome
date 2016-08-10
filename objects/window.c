@@ -27,9 +27,35 @@
  * @classmod xproperties
  */
 
+/**
+ * @signal property::border_color
+ */
+
+/**
+ * @signal property::border_width
+ */
+
+/**
+ * @signal property::buttons
+ */
+
+/**
+ * @signal property::opacity
+ */
+
+/**
+ * @signal property::struts
+ */
+
+/**
+ * @signal property::type
+ */
+
 #include "objects/window.h"
 #include "common/atoms.h"
+#include "common/xutil.h"
 #include "ewmh.h"
+#include "objects/screen.h"
 #include "property.h"
 #include "xwindow.h"
 
@@ -63,6 +89,7 @@ luaA_window_buttons(lua_State *L)
         luaA_button_array_set(L, 1, 2, &window->buttons);
         luaA_object_emit_signal(L, 1, "property::buttons", 0);
         xwindow_buttons_grab(window_get(window), &window->buttons);
+        xwindow_buttons_grab(window->window, &window->buttons);
     }
 
     return luaA_button_array_get(L, 1, &window->buttons);
@@ -82,14 +109,9 @@ luaA_window_struts(lua_State *L)
         luaA_tostrut(L, 2, &window->strut);
         ewmh_update_strut(window->window, &window->strut);
         luaA_object_emit_signal(L, 1, "property::struts", 0);
-        /* FIXME: Only emit if the workarea actually changed
-         * (= window is visible, only on the right screen)? */
+        /* We don't know the correct screen, update them all */
         foreach(s, globalconf.screens)
-        {
-            luaA_object_push(L, *s);
-            luaA_object_emit_signal(L, -1, "property::workarea", 0);
-            lua_pop(L, 1);
-        }
+            screen_update_workarea(*s);
     }
 
     return luaA_pushstrut(L, window->strut);
@@ -148,6 +170,19 @@ luaA_window_get_opacity(lua_State *L, window_t *window)
     return 1;
 }
 
+void
+window_border_refresh(window_t *window)
+{
+    if(!window->border_need_update)
+        return;
+    window->border_need_update = false;
+    xwindow_set_border_color(window_get(window), &window->border_color);
+    if(window->window)
+        xcb_configure_window(globalconf.connection, window_get(window),
+                             XCB_CONFIG_WINDOW_BORDER_WIDTH,
+                             (uint32_t[]) { window->border_width });
+}
+
 /** Set the window border color.
  * \param L The Lua VM state.
  * \param window The window object.
@@ -162,7 +197,7 @@ luaA_window_set_border_color(lua_State *L, window_t *window)
     if(color_name &&
        color_init_reply(color_init_unchecked(&window->border_color, color_name, len)))
     {
-        xwindow_set_border_color(window_get(window), &window->border_color);
+        window->border_need_update = true;
         luaA_object_emit_signal(L, -3, "property::border_color", 0);
     }
 
@@ -183,11 +218,7 @@ window_set_border_width(lua_State *L, int idx, int width)
     if(width == window->border_width || width < 0)
         return;
 
-    if(window->window)
-        xcb_configure_window(globalconf.connection, window_get(window),
-                             XCB_CONFIG_WINDOW_BORDER_WIDTH,
-                             (uint32_t[]) { width });
-
+    window->border_need_update = true;
     window->border_width = width;
 
     if(window->border_width_callback)
@@ -343,7 +374,7 @@ window_set_xproperty(lua_State *L, xcb_window_t window, int prop_idx, int value_
         } else if(prop->type == PROP_NUMBER || prop->type == PROP_BOOLEAN)
         {
             if (prop->type == PROP_NUMBER)
-                number = luaL_checkinteger(L, value_idx);
+                number = luaA_checkinteger_range(L, value_idx, 0, UINT32_MAX);
             else
                 number = luaA_checkboolean(L, value_idx);
             data = &number;
@@ -466,7 +497,7 @@ window_translate_type(window_type_t type)
 static int
 luaA_window_set_border_width(lua_State *L, window_t *c)
 {
-    window_set_border_width(L, -3, luaL_checknumber(L, -1));
+    window_set_border_width(L, -3, round(luaA_checknumber_range(L, -1, 0, MAX_X11_SIZE)));
     return 0;
 }
 
@@ -512,31 +543,6 @@ window_class_setup(lua_State *L)
                             (lua_class_propfunc_t) luaA_window_set_border_width,
                             (lua_class_propfunc_t) luaA_window_get_border_width,
                             (lua_class_propfunc_t) luaA_window_set_border_width);
-
-    /**
-     * @signal property::border_color
-     */
-    signal_add(&window_class.signals, "property::border_color");
-    /**
-     * @signal property::border_width
-     */
-    signal_add(&window_class.signals, "property::border_width");
-    /**
-     * @signal property::buttons
-     */
-    signal_add(&window_class.signals, "property::buttons");
-    /**
-     * @signal property::opacity
-     */
-    signal_add(&window_class.signals, "property::opacity");
-    /**
-     * @signal property::struts
-     */
-    signal_add(&window_class.signals, "property::struts");
-    /**
-     * @signal property::type
-     */
-    signal_add(&window_class.signals, "property::type");
 }
 
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

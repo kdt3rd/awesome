@@ -1,10 +1,10 @@
 --- Tests for focus signals / property.
 -- Test for https://github.com/awesomeWM/awesome/issues/134.
 
-awful = require("awful")
-timer = require("gears.timer")
+local runner = require("_runner")
+local awful = require("awful")
 
-beautiful = require("beautiful")
+local beautiful = require("beautiful")
 beautiful.border_normal = "#0000ff"
 beautiful.border_focus  = "#00ff00"
 
@@ -45,6 +45,6 @@ local steps = {
   end
 }
 
-require("_runner").run_steps(steps)
+runner.run_steps(steps)
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

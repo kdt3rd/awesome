@@ -6,9 +6,9 @@
 -- @release @AWESOME_VERSION@
 -- @classmod wibox.layout
 ---------------------------------------------------------------------------
+local base = require("wibox.widget.base")
 
-return
-{
+return setmetatable({
     fixed = require("wibox.layout.fixed");
     align = require("wibox.layout.align");
     flex = require("wibox.layout.flex");
@@ -17,6 +17,8 @@ return
     mirror = require("wibox.layout.mirror");
     constraint = require("wibox.layout.constraint");
     scroll = require("wibox.layout.scroll");
-}
+    ratio = require("wibox.layout.ratio");
+    stack = require("wibox.layout.stack");
+}, {__call = function(_, args) return base.make_widget_declarative(args) end})
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

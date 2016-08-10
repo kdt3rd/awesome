@@ -75,6 +75,18 @@ luaA_typerror(lua_State *L, int narg, const char *tname)
     return luaL_argerror(L, narg, msg);
 }
 
+static inline int
+luaA_rangerror(lua_State *L, int narg, double min, double max)
+{
+    const char *msg = lua_pushfstring(L, "value in [%f, %f] expected, got %f",
+                                      min, max, (double) lua_tonumber(L, narg));
+#if LUA_VERSION_NUM >= 502
+    luaL_traceback(L, L, NULL, 2);
+    lua_concat(L, 2);
+#endif
+    return luaL_argerror(L, narg, msg);
+}
+
 static inline void
 luaA_getuservalue(lua_State *L, int idx)
 {
@@ -141,10 +153,37 @@ luaA_getopt_number(lua_State *L, int idx, const char *name, lua_Number def)
     return def;
 }
 
+static inline lua_Number
+luaA_checknumber_range(lua_State *L, int n, lua_Number min, lua_Number max)
+{
+    lua_Number result = lua_tonumber(L, n);
+    if (result < min || result > max)
+        luaA_rangerror(L, n, min, max);
+    return result;
+}
+
+static inline lua_Number
+luaA_optnumber_range(lua_State *L, int narg, lua_Number def, lua_Number min, lua_Number max)
+{
+    if (lua_isnoneornil(L, narg))
+        return def;
+    return luaA_checknumber_range(L, narg, min, max);
+}
+
+static inline lua_Number
+luaA_getopt_number_range(lua_State *L, int idx, const char *name, lua_Number def, lua_Number min, lua_Number max)
+{
+    lua_getfield(L, idx, name);
+    if (lua_isnil(L, -1) || lua_isnumber(L, -1))
+        def = luaA_optnumber_range(L, -1, def, min, max);
+    lua_pop(L, 1);
+    return def;
+}
+
 static inline int
 luaA_checkinteger(lua_State *L, int n)
 {
-    double d = lua_tonumber(L, n);
+    lua_Number d = lua_tonumber(L, n);
     if (d != (int)d)
         luaA_typerror(L, n, "integer");
     return d;
@@ -166,6 +205,33 @@ luaA_getopt_integer(lua_State *L, int idx, const char *name, lua_Integer def)
     return def;
 }
 
+static inline int
+luaA_checkinteger_range(lua_State *L, int n, lua_Number min, lua_Number max)
+{
+    int result = luaA_checkinteger(L, n);
+    if (result < min || result > max)
+        luaA_rangerror(L, n, min, max);
+    return result;
+}
+
+static inline lua_Integer
+luaA_optinteger_range(lua_State *L, int narg, lua_Integer def, lua_Number min, lua_Number max)
+{
+    if (lua_isnoneornil(L, narg))
+        return def;
+    return luaA_checkinteger_range(L, narg, min, max);
+}
+
+static inline int
+luaA_getopt_integer_range(lua_State *L, int idx, const char *name, lua_Integer def, lua_Number min, lua_Number max)
+{
+    lua_getfield(L, idx, name);
+    if (lua_isnil(L, -1) || lua_isnumber(L, -1))
+        def = luaA_optinteger_range(L, -1, def, min, max);
+    lua_pop(L, 1);
+    return def;
+}
+
 /** Push a area type to a table on stack.
  * \param L The Lua VM state.
  * \param geometry The area geometry to push.
@@ -175,13 +241,13 @@ static inline int
 luaA_pusharea(lua_State *L, area_t geometry)
 {
     lua_createtable(L, 0, 4);
-    lua_pushnumber(L, geometry.x);
+    lua_pushinteger(L, geometry.x);
     lua_setfield(L, -2, "x");
-    lua_pushnumber(L, geometry.y);
+    lua_pushinteger(L, geometry.y);
     lua_setfield(L, -2, "y");
-    lua_pushnumber(L, geometry.width);
+    lua_pushinteger(L, geometry.width);
     lua_setfield(L, -2, "width");
-    lua_pushnumber(L, geometry.height);
+    lua_pushinteger(L, geometry.height);
     lua_setfield(L, -2, "height");
     return 1;
 }

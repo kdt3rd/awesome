@@ -1,18 +1,22 @@
 -- Some benchmarks that aren't really tests, but are included here anyway so
 -- that we notice if they break.
 
+local runner = require("_runner")
 local awful = require("awful")
 local GLib = require("lgi").GLib
 local create_wibox = require("_wibox_helper").create_wibox
 
-local not_under_travis = not os.getenv("CI")
+local BENCHMARK_EXACT = os.getenv("BENCHMARK_EXACT")
+if not BENCHMARK_EXACT then
+    print("Doing quick and inexact measurements. Set BENCHMARK_EXACT=1 as an environment variable when you actually want to look at the results.")
+end
 
 local measure, benchmark
 do
     local timer_measure = GLib.Timer()
     measure = function(f, iter)
         timer_measure:start()
-        for i = 1, iter do
+        for _ = 1, iter do
             f()
         end
         local elapsed = timer_measure:elapsed()
@@ -26,7 +30,7 @@ do
         local time_per_iter, time_total = measure(f, iters)
         -- To improve precision, we want to loop for this long
         local target_time = 1
-        while time_total < target_time and not_under_travis do
+        while time_total < target_time and BENCHMARK_EXACT do
             iters = math.ceil(target_time / time_per_iter)
             time_per_iter, time_total = measure(f, iters)
         end
@@ -44,7 +48,7 @@ local function create_and_draw_wibox()
     do_pending_repaint()
 end
 
-local wb, textclock = create_wibox()
+local _, textclock = create_wibox()
 
 local function relayout_textclock()
     textclock:emit_signal("widget::layout_changed")
@@ -72,6 +76,6 @@ benchmark(relayout_textclock, "relayout textclock")
 benchmark(redraw_textclock, "redraw textclock")
 benchmark(e2e_tag_switch, "tag switch")
 
-require("_runner").run_steps({ function() return true end })
+runner.run_steps({ function() return true end })
 
 -- vim: filetype=lua:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

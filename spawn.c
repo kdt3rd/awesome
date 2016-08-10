@@ -27,6 +27,31 @@
  * @module awesome
  */
 
+/** For some reason the application aborted startup
+ * @param arg Table which only got the "id" key set
+ * @signal spawn::canceled
+ */
+
+/** When one of the fields from the @{spawn::initiated} table changes
+ * @param arg Table which describes the spawn event
+ * @signal spawn::change
+ */
+
+/** An application finished starting
+ * @param arg Table which only got the "id" key set
+ * @signal spawn::completed
+ */
+
+/** When a new client is beginning to start
+ * @param arg Table which describes the spawn event
+ * @signal spawn::initiated
+ */
+
+/** An application started a spawn event but didn't start in time.
+ * @param arg Table which only got the "id" key set
+ * @signal spawn::timeout
+ */
+
 #include "spawn.h"
 
 #include <unistd.h>
@@ -87,8 +112,6 @@ spawn_monitor_timeout(gpointer sequence)
              }
              lua_pop(L, 1);
          }
-         else
-             warn("spawn::timeout signal is missing");
     }
     sn_startup_sequence_unref(sequence);
     return FALSE;
@@ -151,7 +174,7 @@ spawn_monitor_event(SnMonitorEvent *event, void *data)
                 lua_setfield(L, -2, "description");
             }
 
-            lua_pushnumber(L, sn_startup_sequence_get_workspace(sequence));
+            lua_pushinteger(L, sn_startup_sequence_get_workspace(sequence));
             lua_setfield(L, -2, "workspace");
 
             if((s = sn_startup_sequence_get_binary_name(sequence)))
@@ -193,8 +216,6 @@ spawn_monitor_event(SnMonitorEvent *event, void *data)
         }
         lua_pop(L, 1);
     }
-    else
-        warn("%s signal is missing", event_type_str);
 }
 
 /** Tell the spawn module that an app has been started.
@@ -244,32 +265,6 @@ spawn_init(void)
                                                   globalconf.default_screen,
                                                   spawn_monitor_event,
                                                   NULL, NULL);
-
-    /** For some reason the application aborted startup
-     * @param arg Table which only got the "id" key set
-     * @signal spawn::canceled
-     */
-    signal_add(&global_signals, "spawn::canceled");
-    /** When one of the fields from the @{spawn::initiated} table changes
-     * @param arg Table which describes the spawn event
-     * @signal spawn::change
-     */
-    signal_add(&global_signals, "spawn::change");
-    /** An application finished starting
-     * @param arg Table which only got the "id" key set
-     * @signal spawn::completed
-     */
-    signal_add(&global_signals, "spawn::completed");
-    /** When a new client is beginning to start
-     * @param arg Table which describes the spawn event
-     * @signal spawn::initiated
-     */
-    signal_add(&global_signals, "spawn::initiated");
-    /** An application started a spawn event but didn't start in time.
-     * @param arg Table which only got the "id" key set
-     * @signal spawn::timeout
-     */
-    signal_add(&global_signals, "spawn::timeout");
 }
 
 static gboolean
@@ -352,11 +347,11 @@ child_exit_callback(GPid pid, gint status, gpointer user_data)
     /* 'Decode' the exit status */
     if (WIFEXITED(status)) {
         lua_pushliteral(L, "exit");
-        lua_pushnumber(L, WEXITSTATUS(status));
+        lua_pushinteger(L, WEXITSTATUS(status));
     } else {
         assert(WIFSIGNALED(status));
         lua_pushliteral(L, "signal");
-        lua_pushnumber(L, WTERMSIG(status));
+        lua_pushinteger(L, WTERMSIG(status));
     }
 
     lua_rawgeti(L, LUA_REGISTRYINDEX, exit_callback);
@@ -419,8 +414,12 @@ luaA_spawn(lua_State *L)
     if(!argv || !argv[0])
     {
         g_strfreev(argv);
-        luaA_warn(L, "spawn: parse error: %s", error->message);
-        g_error_free(error);
+        if (error) {
+            luaA_warn(L, "spawn: parse error: %s", error->message);
+            g_error_free(error);
+        }
+        else
+            luaA_warn(L, "spawn: There is nothing to execute");
         return 1;
     }
 
@@ -461,7 +460,7 @@ luaA_spawn(lua_State *L)
     }
 
     /* push pid on stack */
-    lua_pushnumber(L, pid);
+    lua_pushinteger(L, pid);
 
     /* push sn on stack */
     if (context)

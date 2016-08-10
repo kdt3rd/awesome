@@ -11,7 +11,6 @@
 local capi = { screen = screen,
                awesome = awesome,
                client = client }
-local type = type
 local setmetatable = setmetatable
 local pairs = pairs
 local ipairs = ipairs
@@ -23,6 +22,10 @@ local beautiful = require("beautiful")
 local fixed = require("wibox.layout.fixed")
 local surface = require("gears.surface")
 local timer = require("gears.timer")
+
+local function get_screen(s)
+    return s and capi.screen[s]
+end
 
 local taglist = { mt = {} }
 taglist.filter = {}
@@ -53,7 +56,8 @@ function taglist.taglist_label(t, args)
     local fg_color = nil
     local bg_image
     local icon
-    local bg_resize = false
+    -- TODO: Re-implement bg_resize
+    local bg_resize = false -- luacheck: ignore
     local is_selected = false
     local cls = t:clients()
 
@@ -107,8 +111,8 @@ function taglist.taglist_label(t, args)
         text = text .. "</span>"
     end
     if not taglist_disable_icon then
-        if tag.geticon(t) then
-            icon = surface.load(tag.geticon(t))
+        if t.icon then
+            icon = surface.load(t.icon)
         end
     end
 
@@ -117,7 +121,7 @@ end
 
 local function taglist_update(s, w, buttons, filter, data, style, update_function)
     local tags = {}
-    for k, t in ipairs(tag.gettags(s)) do
+    for _, t in ipairs(s.tags) do
         if not tag.getproperty(t, "hide") and filter(t) then
             table.insert(tags, t)
         end
@@ -153,6 +157,7 @@ end
 -- @param[opt] base_widget.squares_resize True or false to resize squares.
 -- @param base_widget.font The font.
 function taglist.new(screen, filter, buttons, style, update_function, base_widget)
+    screen = get_screen(screen)
     local uf = update_function or common.list_update
     local w = base_widget or fixed.horizontal()
 
@@ -163,16 +168,18 @@ function taglist.new(screen, filter, buttons, style, update_function, base_widge
         -- Add a delayed callback for the first update.
         if not queued_update[screen] then
             timer.delayed_call(function()
-                taglist_update(screen, w, buttons, filter, data, style, uf)
+                if screen.valid then
+                    taglist_update(screen, w, buttons, filter, data, style, uf)
+                end
                 queued_update[screen] = false
             end)
             queued_update[screen] = true
         end
     end
     if instances == nil then
-        instances = {}
+        instances = setmetatable({}, { __mode = "k" })
         local function u(s)
-            local i = instances[s]
+            local i = instances[get_screen(s)]
             if i then
                 for _, tlist in pairs(i) do
                     tlist._do_taglist_update()
@@ -180,7 +187,7 @@ function taglist.new(screen, filter, buttons, style, update_function, base_widge
             end
         end
         local uc = function (c) return u(c.screen) end
-        local ut = function (t) return u(tag.getscreen(t)) end
+        local ut = function (t) return u(t.screen) end
         capi.client.connect_signal("focus", uc)
         capi.client.connect_signal("unfocus", uc)
         tag.attached_connect_signal(nil, "property::selected", ut)
@@ -198,9 +205,12 @@ function taglist.new(screen, filter, buttons, style, update_function, base_widge
         capi.client.connect_signal("tagged", uc)
         capi.client.connect_signal("untagged", uc)
         capi.client.connect_signal("unmanage", uc)
+        capi.screen.connect_signal("removed", function(s)
+            instances[get_screen(s)] = nil
+        end)
     end
     w._do_taglist_update()
-    local list = instances[s]
+    local list = instances[screen]
     if not list then
         list = setmetatable({}, { __mode = "v" })
         instances[screen] = list
@@ -211,25 +221,21 @@ end
 
 --- Filtering function to include all nonempty tags on the screen.
 -- @param t The tag.
--- @param args unused list of extra arguments.
 -- @return true if t is not empty, else false
-function taglist.filter.noempty(t, args)
+function taglist.filter.noempty(t)
     return #t:clients() > 0 or t.selected
 end
 
 --- Filtering function to include selected tags on the screen.
 -- @param t The tag.
--- @param args unused list of extra arguments.
 -- @return true if t is not empty, else false
-function taglist.filter.selected(t, args)
+function taglist.filter.selected(t)
     return t.selected
 end
 
 --- Filtering function to include all tags on the screen.
--- @param t The tag.
--- @param args unused list of extra arguments.
 -- @return true
-function taglist.filter.all(t, args)
+function taglist.filter.all()
     return true
 end
 

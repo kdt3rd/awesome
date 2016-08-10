@@ -49,6 +49,34 @@
  * @function instances
  */
 
+/** Set a __index metamethod for all button instances.
+ * @tparam function cb The meta-method
+ * @function set_index_miss_handler
+ */
+
+/** Set a __newindex metamethod for all button instances.
+ * @tparam function cb The meta-method
+ * @function set_newindex_miss_handler
+ */
+
+/** When bound mouse button + modifiers are pressed.
+ * @param ... One or more arguments are possible
+ * @signal .press
+ */
+
+/** When property changes.
+ * @signal property::button
+ */
+
+/** When property changes.
+ * @signal property::modifiers
+ */
+
+/** When bound mouse button + modifiers are pressed.
+ * @param ... One or more arguments are possible
+ * @signal .release
+ */
+
 /** Create a new mouse button bindings.
  * \param L The Lua VM state.
  * \return The number of elements pushed on stack.
@@ -102,7 +130,7 @@ luaA_button_array_get(lua_State *L, int oidx, button_array_t *buttons)
     return 1;
 }
 
-LUA_OBJECT_EXPORT_PROPERTY(button, button_t, button, lua_pushnumber);
+LUA_OBJECT_EXPORT_PROPERTY(button, button_t, button, lua_pushinteger);
 LUA_OBJECT_EXPORT_PROPERTY(button, button_t, modifiers, luaA_pushmodifiers);
 
 static int
@@ -116,7 +144,7 @@ luaA_button_set_modifiers(lua_State *L, button_t *b)
 static int
 luaA_button_set_button(lua_State *L, button_t *b)
 {
-    b->button = luaL_checknumber(L, -1);
+    b->button = luaL_checkinteger(L, -1);
     luaA_object_emit_signal(L, -3, "property::button", 0);
     return 0;
 }
@@ -150,25 +178,6 @@ button_class_setup(lua_State *L)
                             (lua_class_propfunc_t) luaA_button_set_modifiers,
                             (lua_class_propfunc_t) luaA_button_get_modifiers,
                             (lua_class_propfunc_t) luaA_button_set_modifiers);
-
-    /** When bound mouse button + modifiers are pressed.
-     * @param ... One or more arguments are possible
-     * @signal .press
-     */
-    signal_add(&button_class.signals, "press");
-    /** When property changes.
-     * @signal property::button
-     */
-    signal_add(&button_class.signals, "property::button");
-    /** When property changes.
-     * @signal property::modifiers
-     */
-    signal_add(&button_class.signals, "property::modifiers");
-    /** When bound mouse button + modifiers are pressed.
-     * @param ... One or more arguments are possible
-     * @signal .release
-     */
-    signal_add(&button_class.signals, "release");
 }
 
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

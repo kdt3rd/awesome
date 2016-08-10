@@ -7,7 +7,6 @@
 
 local capi = {awesome = awesome}
 local setmetatable = setmetatable
-local os = os
 local textbox = require("wibox.widget.textbox")
 local button = require("awful.button")
 local util = require("awful.util")
@@ -114,7 +113,7 @@ keyboardlayout.xkeyboard_country_code = {
     ["za"] = true,    -- South Africa
 }
 
--- Callback for updaing current layout
+-- Callback for updating current layout.
 local function update_status (self)
     self._current = awesome.xkb_get_layout_group();
     local text = ""
@@ -215,7 +214,7 @@ function keyboardlayout.get_groups_from_group_names(group_names)
                 end
 
                 if section then
-                    section = string.gsub(section, "%(([%w_]+)%)", "%1")
+                    section = string.gsub(section, "%(([%w-_]+)%)", "%1")
                 end
 
                 table.insert(layout_groups, { vendor = vendor,
@@ -242,10 +241,7 @@ local function update_layout(self)
         layouts[1].group_idx = 0
     end
     for _, v in ipairs(layouts) do
-        local layout_name = v.file
-        if v.section ~= nil then
-            layout_name = layout_name .. "(" .. v.section .. ")"
-        end
+        local layout_name = self.layout_name(v)
         -- Please note that numbers of groups reported by xkb_get_group_names
         -- is greater by one than the real group number.
         self._layout[v.group_idx - 1] = layout_name
@@ -261,11 +257,16 @@ function keyboardlayout.new()
 
     self.widget = widget
 
-    update_layout(self);
+    self.layout_name = function(v)
+        local name = v.file
+        if v.section ~= nil then
+            name = name .. "(" .. v.section .. ")"
+        end
+        return name
+    end
 
     self.next_layout = function()
-        new_layout = (self._current + 1) % (#self._layout + 1)
-        self.set_layout(new_layout)
+        self.set_layout((self._current + 1) % (#self._layout + 1))
     end
 
     self.set_layout = function(group_number)
@@ -276,6 +277,8 @@ function keyboardlayout.new()
         end
         awesome.xkb_set_layout_group(group_number);
     end
+
+    update_layout(self);
 
     -- callback for processing layout changes
     capi.awesome.connect_signal("xkb::map_changed",

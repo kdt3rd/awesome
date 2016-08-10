@@ -352,9 +352,17 @@ a_glib_poll(GPollFD *ufds, guint nfsd, gint timeout)
     guint res;
     struct timeval now, length_time;
     float length;
+    lua_State *L = globalconf_get_lua_State();
 
     /* Do all deferred work now */
     awesome_refresh();
+
+    /* Check if the Lua stack is the way it should be */
+    if (lua_gettop(L) != 0) {
+        warn("Something was left on the Lua stack, this is a bug!");
+        luaA_dumpstack(L);
+        lua_settop(L, 0);
+    }
 
     /* Check how long this main loop iteration took */
     gettimeofday(&now, NULL);
@@ -422,6 +430,7 @@ exit_help(int exit_code)
   -v, --version          show version\n\
   -c, --config FILE      configuration file to use\n\
   -k, --check            check configuration file syntax\n\
+  -a, --no-argb          disable client transparency support\n\
   -r, --replace          replace an existing window manager\n");
     exit(exit_code);
 }
@@ -628,6 +637,8 @@ main(int argc, char **argv)
     query = xcb_get_extension_data(globalconf.connection, &xcb_shape_id);
     globalconf.have_shape = query->present;
 
+    event_init();
+
     /* Allocate the key symbols */
     globalconf.keysyms = xcb_key_symbols_alloc(globalconf.connection);
 
@@ -684,6 +695,9 @@ main(int argc, char **argv)
     /* we will receive events, stop grabbing server */
     xcb_ungrab_server(globalconf.connection);
     xcb_flush(globalconf.connection);
+
+    /* get the current wallpaper, from now on we are informed when it changes */
+    root_update_wallpaper();
 
     /* Parse and run configuration file */
     if (!luaA_parserc(&xdg, confpath, true))

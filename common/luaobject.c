@@ -84,7 +84,7 @@ luaA_object_incref(lua_State *L, int tud, int oud)
     /* Get the number of references */
     lua_rawget(L, -2);
     /* Get the number of references and increment it */
-    int count = lua_tonumber(L, -1) + 1;
+    int count = lua_tointeger(L, -1) + 1;
     lua_pop(L, 1);
     /* Push the pointer (key) */
     lua_pushlightuserdata(L, pointer);
@@ -121,8 +121,8 @@ luaA_object_decref(lua_State *L, int tud, const void *pointer)
     /* Get the number of references */
     lua_rawget(L, -2);
     /* Get the number of references and decrement it */
-    int count = lua_tonumber(L, -1) - 1;
-    /* Did we find the item in our table? (tonumber(nil)-1) is -1 */
+    int count = lua_tointeger(L, -1) - 1;
+    /* Did we find the item in our table? (tointeger(nil)-1) is -1 */
     if (count < 0)
     {
         buffer_t buf;
@@ -222,8 +222,8 @@ luaA_object_disconnect_signal_from_stack(lua_State *L, int oud,
     luaA_checkfunction(L, ud);
     lua_object_t *obj = lua_touserdata(L, oud);
     void *ref = (void *) lua_topointer(L, ud);
-    signal_disconnect(&obj->signals, name, ref);
-    luaA_object_unref_item(L, oud, ref);
+    if (signal_disconnect(&obj->signals, name, ref))
+        luaA_object_unref_item(L, oud, ref);
     lua_remove(L, ud);
 }
 
@@ -236,7 +236,7 @@ signal_object_emit(lua_State *L, signal_array_t *arr, const char *name, int narg
     if(sigfound)
     {
         int nbfunc = sigfound->sigfuncs.len;
-        luaL_checkstack(L, lua_gettop(L) + nbfunc + nargs + 1, "too much signal");
+        luaL_checkstack(L, nbfunc + nargs + 1, "too much signal");
         /* Push all functions and then execute, because this list can change
          * while executing funcs. */
         foreach(func, sigfound->sigfuncs)
@@ -253,8 +253,7 @@ signal_object_emit(lua_State *L, signal_array_t *arr, const char *name, int narg
             lua_remove(L, - nargs - nbfunc - 1 + i);
             luaA_dofunction(L, nargs, 0);
         }
-    } else
-        luaA_warn(L, "Trying to emit unknown signal '%s'", name);
+    }
 
     /* remove args */
     lua_pop(L, nargs);
@@ -285,7 +284,7 @@ luaA_object_emit_signal(lua_State *L, int oud,
     if(sigfound)
     {
         int nbfunc = sigfound->sigfuncs.len;
-        luaL_checkstack(L, lua_gettop(L) + nbfunc + nargs + 2, "too much signal");
+        luaL_checkstack(L, nbfunc + nargs + 2, "too much signal");
         /* Push all functions and then execute, because this list can change
          * while executing funcs. */
         foreach(func, sigfound->sigfuncs)
@@ -304,9 +303,6 @@ luaA_object_emit_signal(lua_State *L, int oud,
             lua_remove(L, - nargs - nbfunc - 2 + i);
             luaA_dofunction(L, nargs + 1, 0);
         }
-    } else {
-        luaA_warn(L, "Trying to emit unknown signal '%s'", name);
-        return;
     }
 
     /* Then emit signal on the class */

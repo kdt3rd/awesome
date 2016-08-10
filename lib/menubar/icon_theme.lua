@@ -12,7 +12,7 @@
 --  http://standards.freedesktop.org/icon-theme-spec/icon-theme-spec-0.12.html
 
 local beautiful = require("beautiful")
-local awful = require("awful")
+local awful_util = require("awful.util")
 local GLib = require("lgi").GLib
 local index_theme = require("menubar.index_theme")
 
@@ -21,38 +21,23 @@ local setmetatable = setmetatable
 local string = string
 local table = table
 local math = math
-local io = io
-
--- Returns a table whose element is a path used for icon lookup.
--- The names of the directories and the order of them are based on the spec.
-local get_default_base_directories = function()
-    local dirs = {}
-
-    table.insert(dirs, GLib.get_home_dir() .. "/.icons")
-    for _, dir in ipairs(GLib.get_system_data_dirs()) do
-        table.insert(dirs, dir .. "/icons")
-    end
-    table.insert(dirs, "/usr/share/pixmaps")
-
-    return dirs
-end
 
 local get_pragmatic_base_directories = function()
     local dirs = {}
 
     local dir = GLib.build_filenamev({GLib.get_home_dir(), ".icons"})
-    if awful.util.dir_readable(dir) then
+    if awful_util.dir_readable(dir) then
         table.insert(dirs, dir)
     end
 
     dir = GLib.build_filenamev({GLib.get_user_data_dir(), "icons"})
-    if awful.util.dir_readable(dir) then
+    if awful_util.dir_readable(dir) then
         table.insert(dirs, dir)
     end
 
     for _, v in ipairs(GLib.get_system_data_dirs()) do
         dir = GLib.build_filenamev({v, "icons"})
-        if awful.util.dir_readable(dir) then
+        if awful_util.dir_readable(dir) then
             table.insert(dirs, dir)
         end
     end
@@ -60,7 +45,7 @@ local get_pragmatic_base_directories = function()
     local need_usr_share_pixmaps = true
     for _, v in ipairs(GLib.get_system_data_dirs()) do
         dir = GLib.build_filenamev({v, "pixmaps"})
-        if awful.util.dir_readable(dir) then
+        if awful_util.dir_readable(dir) then
             table.insert(dirs, dir)
         end
         if dir == "/usr/share/pixmaps" then
@@ -69,7 +54,7 @@ local get_pragmatic_base_directories = function()
     end
 
     dir = "/usr/share/pixmaps"
-    if need_usr_share_pixmaps and awful.util.dir_readable(dir) then
+    if need_usr_share_pixmaps and awful_util.dir_readable(dir) then
         table.insert(dirs, dir)
     end
 
@@ -81,7 +66,7 @@ local get_default_icon_theme_name = function()
     for _, dir in ipairs(get_pragmatic_base_directories()) do
         for _, icon_theme_name in ipairs(icon_theme_names) do
             local filename = string.format("%s/%s/index.theme", dir, icon_theme_name)
-            if awful.util.file_readable(filename) then
+            if awful_util.file_readable(filename) then
                 return icon_theme_name
             end
         end
@@ -98,8 +83,8 @@ local index_theme_cache = {}
 -- @tparam table base_directories Paths used for lookup
 -- @treturn table An instance of the class `icon_theme`
 icon_theme.new = function(icon_theme_name, base_directories)
-    local icon_theme_name = icon_theme_name or beautiful.icon_theme or get_default_icon_theme_name()
-    local base_directories = base_directories or get_pragmatic_base_directories()
+    icon_theme_name = icon_theme_name or beautiful.icon_theme or get_default_icon_theme_name()
+    base_directories = base_directories or get_pragmatic_base_directories()
 
     local self = {}
     self.icon_theme_name = icon_theme_name
@@ -168,7 +153,7 @@ local lookup_icon = function(self, icon_name, icon_size)
                     local filename = string.format("%s/%s/%s/%s.%s",
                                                    basedir, self.icon_theme_name, subdir,
                                                    icon_name, ext)
-                    if awful.util.file_readable(filename) then
+                    if awful_util.file_readable(filename) then
                         return filename
                     else
                         checked_already[filename] = true
@@ -189,7 +174,7 @@ local lookup_icon = function(self, icon_name, icon_size)
                                                    basedir, self.icon_theme_name, subdir,
                                                    icon_name, ext)
                     if not checked_already[filename] then
-                        if awful.util.file_readable(filename) then
+                        if awful_util.file_readable(filename) then
                             closest_filename = filename
                             minimal_size = dist
                         end
@@ -225,7 +210,7 @@ local lookup_fallback_icon = function(self, icon_name)
             local filename = string.format("%s/%s.%s",
                                            dir,
                                            icon_name, ext)
-            if awful.util.file_readable(filename) then
+            if awful_util.file_readable(filename) then
                 return filename
             end
         end
@@ -238,10 +223,10 @@ end
 -- @tparam number icon_size Prefereable icon size
 -- @treturn string Absolute path to the icon file, or nil if not found
 function icon_theme:find_icon_path(icon_name, icon_size)
+    icon_size = icon_size or 16
     if not icon_name or icon_name == "" then
         return nil
     end
-    local icon_size = icon_size or 16
 
     local filename = find_icon_path_helper(self, icon_name, icon_size)
     if filename then

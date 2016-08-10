@@ -23,7 +23,7 @@ local schar = string.char
 local sbyte = string.byte
 local tcat = table.concat
 local tins = table.insert
-local unpack = unpack or table.unpack -- v5.1: unpack, v5.2: table.unpack
+local unpack = unpack or table.unpack -- luacheck: globals unpack (compatibility with Lua 5.1)
 local naughty = require("naughty.core")
 
 --- Notification library, dbus bindings
@@ -88,7 +88,7 @@ local function convert_icon(w, h, rowstride, channels, data)
     -- Now convert each row on its own
     local rows = {}
 
-    for y = 1, h do
+    for _ = 1, h do
         local this_row = {}
 
         for i = 1 + offset, w * channels + offset, channels do
@@ -124,8 +124,8 @@ capi.dbus.connect_signal("org.freedesktop.Notifications", function (data, appnam
         if appname ~= "" then
             args.appname = appname
         end
-        for i, obj in pairs(dbus.config.mapping) do
-            local filter, preset, s = obj[1], obj[2], 0
+        for _, obj in pairs(dbus.config.mapping) do
+            local filter, preset = obj[1], obj[2]
             if (not filter.urgency or filter.urgency == hints.urgency) and
                (not filter.category or filter.category == hints.category) and
                (not filter.appname or filter.appname == appname) then
@@ -137,24 +137,20 @@ capi.dbus.connect_signal("org.freedesktop.Notifications", function (data, appnam
         if actions then
             args.actions = {}
 
-            local actionid
-            -- create actions callbacks
-            for i , v in ipairs(actions) do
-                if i % 2 == 1 then
-                    actionid = v
-                elseif actionid == "default" then
+            for i = 1,#actions,2 do
+                local action_id = actions[i]
+                local action_text = actions[i + 1]
+
+                if action_id == "default" then
                     args.run = function()
                         sendActionInvoked(notification.id, "default")
                         naughty.destroy(notification, naughty.notificationClosedReason.dismissedByUser)
                     end
-                    actionid = nil
-                elseif actionid ~= nil then
-                    local action = actionid
-                    args.actions[actionid] = function()
-                        sendActionInvoked(notification.id, action)
+                elseif action_id ~= nil and action_text ~= nil then
+                    args.actions[action_text] = function()
+                        sendActionInvoked(notification.id, action_id)
                         naughty.destroy(notification, naughty.notificationClosedReason.dismissedByUser)
                     end
-                    actionid = nil
                 end
             end
         end
@@ -176,8 +172,8 @@ capi.dbus.connect_signal("org.freedesktop.Notifications", function (data, appnam
                 -- 5 -> bits per sample
                 -- 6 -> channels
                 -- 7 -> data
-                local w, h, rowstride, _, _, channels, data = unpack(hints.icon_data)
-                args.icon = convert_icon(w, h, rowstride, channels, data)
+                local w, h, rowstride, _, _, channels, icon_data = unpack(hints.icon_data)
+                args.icon = convert_icon(w, h, rowstride, channels, icon_data)
             end
             if replaces_id and replaces_id ~= "" and replaces_id ~= 0 then
                 args.replaces_id = replaces_id
@@ -204,7 +200,7 @@ capi.dbus.connect_signal("org.freedesktop.Notifications", function (data, appnam
     end
 end)
 
-capi.dbus.connect_signal("org.freedesktop.DBus.Introspectable", function (data, text)
+capi.dbus.connect_signal("org.freedesktop.DBus.Introspectable", function (data)
     if data.member == "Introspect" then
         local xml = [=[<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object
     Introspection 1.0//EN"

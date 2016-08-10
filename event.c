@@ -122,10 +122,11 @@ event_handle_mousegrabber(int x, int y, uint16_t mask)
         {
             warn("Stopping mousegrabber.");
             luaA_mousegrabber_stop(L);
+        } else {
+            if(!lua_isboolean(L, -1) || !lua_toboolean(L, -1))
+                luaA_mousegrabber_stop(L);
+            lua_pop(L, 1);  /* pop returned value */
         }
-        else if(!lua_isboolean(L, -1) || !lua_toboolean(L, -1))
-            luaA_mousegrabber_stop(L);
-        lua_pop(L, 1);  /* pop returned value */
         return true;
     }
     return false;
@@ -153,9 +154,9 @@ event_emit_button(lua_State *L, xcb_button_press_event_t *ev)
     }
 
     /* Push the event's info */
-    lua_pushnumber(L, ev->event_x);
-    lua_pushnumber(L, ev->event_y);
-    lua_pushnumber(L, ev->detail);
+    lua_pushinteger(L, ev->event_x);
+    lua_pushinteger(L, ev->event_y);
+    lua_pushinteger(L, ev->detail);
     luaA_pushmodifiers(L, ev->state);
     /* And emit the signal */
     luaA_object_emit_signal(L, -5, name, 4);
@@ -222,26 +223,44 @@ event_handle_button(xcb_button_press_event_t *ev)
                              XCB_ALLOW_ASYNC_POINTER,
                              XCB_CURRENT_TIME);
     }
-    else if((c = client_getbyframewin(ev->event)))
+    else if((c = client_getbyframewin(ev->event)) || (c = client_getbywin(ev->event)))
     {
-        luaA_object_push(L, c);
-        /* And handle the button raw button event */
-        event_emit_button(L, ev);
-        /* then check if a titlebar was "hit" */
-        int x = ev->event_x, y = ev->event_y;
-        drawable_t *d = client_get_drawable_offset(c, &x, &y);
-        if (d)
+        /* For clicks inside of c->window, we get two events. Once because of a
+         * passive grab on c->window and then again for c->frame_window.
+         * Ignore the second event (identifiable by ev->child != XCB_NONE).
+         */
+        if (ev->event != c->frame_window || ev->child == XCB_NONE)
         {
-            /* Copy the event so that we can fake x/y */
-            xcb_button_press_event_t event = *ev;
-            event.event_x = x;
-            event.event_y = y;
-            luaA_object_push_item(L, -1, d);
-            event_emit_button(L, &event);
-            lua_pop(L, 1);
+            luaA_object_push(L, c);
+            if (c->window == ev->event)
+            {
+                /* Button event into the client itself (not titlebar), translate
+                 * into the frame window.
+                 */
+                ev->event_x += c->titlebar[CLIENT_TITLEBAR_LEFT].size;
+                ev->event_y += c->titlebar[CLIENT_TITLEBAR_TOP].size;
+            }
+            /* And handle the button raw button event */
+            event_emit_button(L, ev);
+            /* then check if a titlebar was "hit" */
+            if (c->frame_window == ev->event)
+            {
+                int x = ev->event_x, y = ev->event_y;
+                drawable_t *d = client_get_drawable_offset(c, &x, &y);
+                if (d)
+                {
+                    /* Copy the event so that we can fake x/y */
+                    xcb_button_press_event_t event = *ev;
+                    event.event_x = x;
+                    event.event_y = y;
+                    luaA_object_push_item(L, -1, d);
+                    event_emit_button(L, &event);
+                    lua_pop(L, 1);
+                }
+            }
+            /* then check if any button objects match */
+            event_button_callback(ev, &c->buttons, L, -1, 1, NULL);
         }
-        /* then check if any button objects match */
-        event_button_callback(ev, &c->buttons, L, -1, 1, NULL);
         xcb_allow_events(globalconf.connection,
                          XCB_ALLOW_REPLAY_POINTER,
                          XCB_CURRENT_TIME);
@@ -384,7 +403,31 @@ event_handle_configurerequest(xcb_configure_request_event_t *ev)
     {
         /* Ignore this so that systray icons cannot resize themselves.
          * We decide their size!
+         * However, Xembed says that we act like a WM to the embedded window and
+         * thus we have to send a synthetic configure notify informing the
+         * window that its configure request was denied.
          */
+        xcb_get_geometry_cookie_t geom_cookie =
+            xcb_get_geometry_unchecked(globalconf.connection, ev->window);
+        xcb_translate_coordinates_cookie_t coords_cookie =
+            xcb_translate_coordinates_unchecked(globalconf.connection,
+                    ev->window, globalconf.screen->root, 0, 0);
+        xcb_get_geometry_reply_t *geom =
+            xcb_get_geometry_reply(globalconf.connection, geom_cookie, NULL);
+        xcb_translate_coordinates_reply_t *coords =
+            xcb_translate_coordinates_reply(globalconf.connection, coords_cookie, NULL);
+
+        if (geom && coords)
+        {
+            xwindow_configure(ev->window,
+                    (area_t) { .x = coords->dst_x,
+                               .y = coords->dst_y,
+                               .width = geom->width,
+                               .height = geom->height },
+                    0);
+        }
+        p_delete(&geom);
+        p_delete(&coords);
     }
     else
         event_handle_configurerequest_configure_window(ev);
@@ -396,13 +439,16 @@ event_handle_configurerequest(xcb_configure_request_event_t *ev)
 static void
 event_handle_configurenotify(xcb_configure_notify_event_t *ev)
 {
-    const xcb_screen_t *screen = globalconf.screen;
+    xcb_screen_t *screen = globalconf.screen;
 
-    if(ev->window == screen->root
-       && (ev->width != screen->width_in_pixels
-           || ev->height != screen->height_in_pixels))
-        /* it's not that we panic, but restart */
-        awesome_restart();
+    if(ev->window == screen->root)
+        globalconf.screen_need_refresh = true;
+
+    /* Copy what XRRUpdateConfiguration() would do: Update the configuration */
+    if(ev->window == screen->root) {
+        screen->width_in_pixels = ev->width;
+        screen->height_in_pixels = ev->height;
+    }
 }
 
 /** The destroy notify event handler.
@@ -480,8 +526,8 @@ event_handle_motionnotify(xcb_motion_notify_event_t *ev)
     if((c = client_getbyframewin(ev->event)))
     {
         luaA_object_push(L, c);
-        lua_pushnumber(L, ev->event_x);
-        lua_pushnumber(L, ev->event_y);
+        lua_pushinteger(L, ev->event_x);
+        lua_pushinteger(L, ev->event_y);
         luaA_object_emit_signal(L, -3, "mouse::move", 2);
 
         /* now check if a titlebar was "hit" */
@@ -491,8 +537,8 @@ event_handle_motionnotify(xcb_motion_notify_event_t *ev)
         {
             luaA_object_push_item(L, -1, d);
             event_drawable_under_mouse(L, -1);
-            lua_pushnumber(L, x);
-            lua_pushnumber(L, y);
+            lua_pushinteger(L, x);
+            lua_pushinteger(L, y);
             luaA_object_emit_signal(L, -3, "mouse::move", 2);
             lua_pop(L, 1);
         }
@@ -504,8 +550,8 @@ event_handle_motionnotify(xcb_motion_notify_event_t *ev)
         luaA_object_push(L, w);
         luaA_object_push_item(L, -1, w->drawable);
         event_drawable_under_mouse(L, -1);
-        lua_pushnumber(L, ev->event_x);
-        lua_pushnumber(L, ev->event_y);
+        lua_pushinteger(L, ev->event_x);
+        lua_pushinteger(L, ev->event_y);
         luaA_object_emit_signal(L, -3, "mouse::move", 2);
         lua_pop(L, 2);
     }
@@ -532,6 +578,7 @@ event_handle_leavenotify(xcb_leave_notify_event_t *ev)
     {
         luaA_object_push(L, c);
         luaA_object_emit_signal(L, -1, "mouse::leave", 0);
+        lua_pop(L, 1);
     }
 
     lua_pushnil(L);
@@ -659,12 +706,11 @@ event_handle_key(xcb_key_press_event_t *ev)
         {
             lua_rawgeti(L, LUA_REGISTRYINDEX, globalconf.keygrabber);
 
-            if(!luaA_dofunction(L, 3, 1))
+            if(!luaA_dofunction(L, 3, 0))
             {
                 warn("Stopping keygrabber.");
                 luaA_keygrabber_stop(L);
             }
-            lua_pop(L, 1);
         }
     }
     else
@@ -672,7 +718,7 @@ event_handle_key(xcb_key_press_event_t *ev)
         /* get keysym ignoring all modifiers */
         xcb_keysym_t keysym = xcb_key_symbols_get_keysym(globalconf.keysyms, ev->detail, 0);
         client_t *c;
-        if((c = client_getbywin(ev->event)))
+        if((c = client_getbywin(ev->event)) || (c = client_getbynofocuswin(ev->event)))
         {
             luaA_object_push(L, c);
             event_key_callback(ev, &c->keys, L, -1, 1, &keysym);
@@ -689,6 +735,7 @@ static void
 event_handle_maprequest(xcb_map_request_event_t *ev)
 {
     client_t *c;
+    xembed_window_t *em;
     xcb_get_window_attributes_cookie_t wa_c;
     xcb_get_window_attributes_reply_t *wa_r;
     xcb_get_geometry_cookie_t geom_c;
@@ -702,10 +749,17 @@ event_handle_maprequest(xcb_map_request_event_t *ev)
     if(wa_r->override_redirect)
         goto bailout;
 
-    if(xembed_getbywin(&globalconf.embedded, ev->window))
+    if((em = xembed_getbywin(&globalconf.embedded, ev->window)))
     {
         xcb_map_window(globalconf.connection, ev->window);
         xembed_window_activate(globalconf.connection, ev->window);
+        /* The correct way to set this is via the _XEMBED_INFO property. Neither
+         * of the XEMBED not the systray spec talk about mapping windows.
+         * Apparently, Qt doesn't care and does not set an _XEMBED_INFO
+         * property. Let's simulate the XEMBED_MAPPED bit.
+         */
+        em->info.flags |= XEMBED_MAPPED;
+        luaA_systray_invalidate();
     }
     else if((c = client_getbywin(ev->window)))
     {
@@ -748,14 +802,6 @@ event_handle_unmapnotify(xcb_unmap_notify_event_t *ev)
 
     if((c = client_getbywin(ev->window)))
         client_unmanage(c, true);
-    else
-        for(int i = 0; i < globalconf.embedded.len; i++)
-            if(globalconf.embedded.tab[i].win == ev->window)
-            {
-                xembed_window_array_take(&globalconf.embedded, i);
-                xcb_change_save_set(globalconf.connection, XCB_SET_MODE_DELETE, ev->window);
-                luaA_systray_invalidate();
-            }
 }
 
 /** The randr screen change notify event handler.
@@ -764,25 +810,65 @@ event_handle_unmapnotify(xcb_unmap_notify_event_t *ev)
 static void
 event_handle_randr_screen_change_notify(xcb_randr_screen_change_notify_event_t *ev)
 {
-    /* Code  of  XRRUpdateConfiguration Xlib  function  ported to  XCB
-     * (only the code relevant  to RRScreenChangeNotify) as the latter
-     * doesn't provide this kind of function */
-    if(ev->rotation & (XCB_RANDR_ROTATION_ROTATE_90 | XCB_RANDR_ROTATION_ROTATE_270))
-        xcb_randr_set_screen_size(globalconf.connection, ev->root, ev->height, ev->width,
-                                  ev->mheight, ev->mwidth);
-    else
-        xcb_randr_set_screen_size(globalconf.connection, ev->root, ev->width, ev->height,
-                                  ev->mwidth, ev->mheight);
+    /* Ignore events for other roots (do we get them at all?) */
+    if (ev->root != globalconf.screen->root)
+        return;
 
-    /* XRRUpdateConfiguration also executes the following instruction
-     * but it's not useful because SubpixelOrder is not used at all at
-     * the moment
-     *
-     * XRenderSetSubpixelOrder(dpy, snum, scevent->subpixel_order);
-     */
+    /* Do (part of) what XRRUpdateConfiguration() would do (update our state) */
+    if (ev->rotation & (XCB_RANDR_ROTATION_ROTATE_90 | XCB_RANDR_ROTATION_ROTATE_270)) {
+        globalconf.screen->width_in_pixels = ev->height;
+        globalconf.screen->height_in_pixels = ev->width;
+    } else {
+        globalconf.screen->width_in_pixels = ev->width;
+        globalconf.screen->height_in_pixels = ev->height;
+    }
 
-    awesome_restart();
+    globalconf.screen_need_refresh = true;
 }
+
+/** XRandR event handler for RRNotify subtype XRROutputChangeNotifyEvent
+ */
+static void
+event_handle_randr_output_change_notify(xcb_randr_notify_event_t *ev)
+{
+    if(ev->subCode == XCB_RANDR_NOTIFY_OUTPUT_CHANGE) {
+        xcb_randr_output_t output = ev->u.oc.output;
+        uint8_t connection = ev->u.oc.connection;
+        const char *connection_str = NULL;
+        xcb_randr_get_output_info_reply_t *info = NULL;
+        lua_State *L = globalconf_get_lua_State();
+
+        info = xcb_randr_get_output_info_reply(globalconf.connection,
+            xcb_randr_get_output_info_unchecked(globalconf.connection,
+                output,
+                XCB_CURRENT_TIME),
+            NULL);
+        if(!info)
+            return;
+
+        switch(connection) {
+            case XCB_RANDR_CONNECTION_CONNECTED:
+                connection_str = "Connected";
+                break;
+            case XCB_RANDR_CONNECTION_DISCONNECTED:
+                connection_str = "Disconnected";
+                break;
+            default:
+                connection_str = "Unknown";
+                break;
+        }
+
+        lua_pushlstring(L, (char *)xcb_randr_get_output_info_name(info), xcb_randr_get_output_info_name_length(info));
+        lua_pushstring(L, connection_str);
+        signal_object_emit(L, &global_signals, "screen::change", 2);
+
+        p_delete(&info);
+
+        /* The docs for RRSetOutputPrimary say we get this signal */
+        screen_update_primary();
+    }
+}
+
 
 /** The shape notify event handler.
  * \param ev The event.
@@ -855,6 +941,16 @@ event_handle_reparentnotify(xcb_reparent_notify_event_t *ev)
          * ourselves if a client quickly unmaps and maps itself again. */
         if (ev->parent != globalconf.screen->root)
             client_unmanage(c, true);
+    }
+    else if (ev->parent != globalconf.systray.window) {
+        /* Embedded window moved elsewhere, end of embedding */
+        for(int i = 0; i < globalconf.embedded.len; i++)
+            if(globalconf.embedded.tab[i].win == ev->window)
+            {
+                xembed_window_array_take(&globalconf.embedded, i);
+                xcb_change_save_set(globalconf.connection, XCB_SET_MODE_DELETE, ev->window);
+                luaA_systray_invalidate();
+            }
     }
 }
 
@@ -931,42 +1027,32 @@ void event_handle(xcb_generic_event_t *event)
 #undef EVENT
     }
 
-    static uint8_t randr_screen_change_notify = 0;
-    static uint8_t shape_notify = 0;
-    static uint8_t xkb_notify = 0;
+#define EXTENSION_EVENT(base, offset, callback) \
+    if (globalconf.event_base_ ## base != 0 \
+            && response_type == globalconf.event_base_ ## base + (offset)) \
+        callback((void *) event)
+    EXTENSION_EVENT(randr, XCB_RANDR_SCREEN_CHANGE_NOTIFY, event_handle_randr_screen_change_notify);
+    EXTENSION_EVENT(randr, XCB_RANDR_NOTIFY, event_handle_randr_output_change_notify);
+    EXTENSION_EVENT(shape, XCB_SHAPE_NOTIFY, event_handle_shape_notify);
+    EXTENSION_EVENT(xkb, 0, event_handle_xkb_notify);
+#undef EXTENSION_EVENT
+}
 
-    if(randr_screen_change_notify == 0)
-    {
-        /* check for randr extension */
-        const xcb_query_extension_reply_t *randr_query;
-        randr_query = xcb_get_extension_data(globalconf.connection, &xcb_randr_id);
-        if(randr_query->present)
-            randr_screen_change_notify = randr_query->first_event + XCB_RANDR_SCREEN_CHANGE_NOTIFY;
-    }
-    if(shape_notify == 0)
-    {
-        /* check for shape extension */
-        const xcb_query_extension_reply_t *shape_query;
-        shape_query = xcb_get_extension_data(globalconf.connection, &xcb_shape_id);
-        if(shape_query->present)
-            shape_notify = shape_query->first_event + XCB_SHAPE_NOTIFY;
-    }
+void event_init(void)
+{
+    const xcb_query_extension_reply_t *reply;
 
-    if(xkb_notify == 0)
-    {
-        /* check for xkb extension */
-        const xcb_query_extension_reply_t *xkb_query;
-        xkb_query = xcb_get_extension_data(globalconf.connection, &xcb_xkb_id);
-        if(xkb_query->present)
-            xkb_notify = xkb_query->first_event;
-    }
+    reply = xcb_get_extension_data(globalconf.connection, &xcb_randr_id);
+    if (reply && reply->present)
+        globalconf.event_base_randr = reply->first_event;
 
-    if (response_type == randr_screen_change_notify)
-        event_handle_randr_screen_change_notify((void *) event);
-    if (response_type == shape_notify)
-        event_handle_shape_notify((void *) event);
-    if (response_type == xkb_notify)
-        event_handle_xkb_notify((void *) event);
+    reply = xcb_get_extension_data(globalconf.connection, &xcb_shape_id);
+    if (reply && reply->present)
+        globalconf.event_base_shape = reply->first_event;
+
+    reply = xcb_get_extension_data(globalconf.connection, &xcb_xkb_id);
+    if (reply && reply->present)
+        globalconf.event_base_xkb = reply->first_event;
 }
 
 // vim: filetype=c:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:textwidth=80

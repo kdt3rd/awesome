@@ -75,6 +75,17 @@ function matrix:rotate(angle)
     return matrix.create_rotate(angle):multiply(self)
 end
 
+--- Rotate a shape from a custom point
+-- @tparam number x The horizontal rotation point
+-- @tparam number y The vertical rotation point
+-- @tparam number angle The angle (in radiant: -2*math.pi to 2*math.pi)
+-- @return A transformation object
+function matrix:rotate_at(x, y, angle)
+    return self * matrix.create_translate( -x, -y )
+                * matrix.create_rotate   ( angle  )
+                * matrix.create_translate(  x,  y )
+end
+
 --- Invert this matrix
 -- @return A new matrix describing the inverse transformation.
 function matrix:invert()
@@ -94,12 +105,14 @@ end
 -- @tparam gears.matrix|cairo.Matrix other The other matrix to multiply with.
 -- @return The multiplication result.
 function matrix:multiply(other)
-    return matrix.create(self.xx * other.xx + self.yx * other.xy,
-            self.xx * other.yx + self.yx * other.yy,
-            self.xy * other.xx + self.yy * other.xy,
-            self.xy * other.yx + self.yy * other.yy,
-            self.x0 * other.xx + self.y0 * other.xy + other.x0,
-            self.x0 * other.yx + self.y0 * other.yy + other.y0)
+    local ret = matrix.create(self.xx * other.xx + self.yx * other.xy,
+        self.xx * other.yx + self.yx * other.yy,
+        self.xy * other.xx + self.yy * other.xy,
+        self.xy * other.yx + self.yy * other.yy,
+        self.x0 * other.xx + self.y0 * other.xy + other.x0,
+        self.x0 * other.yx + self.y0 * other.yy + other.y0)
+
+    return ret
 end
 
 --- Check if two matrices are equal.
@@ -139,9 +152,9 @@ end
 -- @tparam number x The x coordinate of the point.
 -- @tparam number y The y coordinate of the point.
 -- @treturn number The x coordinate of the transformed point.
--- @treturn number The x coordinate of the transformed point.
+-- @treturn number The y coordinate of the transformed point.
 function matrix:transform_point(x, y)
-    local x, y = self:transform_distance(x, y)
+    x, y = self:transform_distance(x, y)
     return self.x0 + x, self.y0 + y
 end
 
@@ -161,10 +174,10 @@ function matrix:transform_rectangle(x, y, width, height)
     local x3, y3 = self:transform_point(x + width, y + height)
     local x4, y4 = self:transform_point(x + width, y)
     -- Find the extremal points of the result
-    local x = math.min(x1, x2, x3, x4)
-    local y = math.min(y1, y2, y3, y4)
-    local width = math.max(x1, x2, x3, x4) - x
-    local height = math.max(y1, y2, y3, y4) - y
+    x = math.min(x1, x2, x3, x4)
+    y = math.min(y1, y2, y3, y4)
+    width = math.max(x1, x2, x3, x4) - x
+    height = math.max(y1, y2, y3, y4) - y
 
     return x, y, width, height
 end

@@ -36,7 +36,6 @@ end
 
 
 local widget = {
-    hide_without_description = true,
     title_font = "Monospace Bold 9",
     description_font = "Monospace 8",
     width = dpi(1200),
@@ -89,6 +88,13 @@ local widget = {
     },
 }
 
+--- Don't show hotkeys without descriptions.
+widget.hide_without_description = true
+
+--- Merge hotkey records into one if they have the same modifiers and
+-- description.
+widget.merge_duplicates = true
+
 
 local cached_wiboxes = {}
 local cached_awful_keys = nil
@@ -123,20 +129,28 @@ local function add_hotkey(key, data, target)
         table.insert(readable_mods, widget.labels[mod] or mod)
     end
     local joined_mods = join_plus_sort(readable_mods)
-    if joined_mods == "none" then
-        joined_mods = ""
-    else
-        joined_mods = markup.fg(widget.modifiers_color, joined_mods.."+")
-    end
 
     local group = data.group or "none"
     group_list[group] = true
     if not target[group] then target[group] = {} end
-    table.insert(
-        target[group],
-        {hotkey= joined_mods .. (widget.labels[key] or key),
-         description=data.description}
-    )
+    local new_key = {
+        key = (widget.labels[key] or key),
+        mod = joined_mods,
+        description = data.description
+    }
+    local index = data.description or "none"  -- or use its hash?
+    if not target[group][index] then
+        target[group][index] = new_key
+    else
+        if widget.merge_duplicates and joined_mods == target[group][index].mod then
+            target[group][index].key = target[group][index].key .. "/" .. new_key.key
+        else
+            while target[group][index] do
+                index = index .. " "
+            end
+            target[group][index] = new_key
+        end
+    end
 end
 
 
@@ -144,10 +158,15 @@ local function sort_hotkeys(target)
     -- @TODO: add sort by 12345qwertyasdf etc
     for group, _ in pairs(group_list) do
         if target[group] then
+            local sorted_table = {}
+            for _, key in pairs(target[group]) do
+                table.insert(sorted_table, key)
+            end
             table.sort(
-                target[group],
-                function(a,b) return a.hotkey<b.hotkey end
+                sorted_table,
+                function(a,b) return (a.mod or '')..a.key<(b.mod or '')..b.key end
             )
+            target[group] = sorted_table
         end
     end
 end
@@ -176,7 +195,7 @@ local function group_label(group, color)
             )
         )
     )
-    local margin = wibox.layout.margin()
+    local margin = wibox.container.margin()
     margin:set_widget(textbox)
     margin:set_top(widget.group_margin)
     return margin
@@ -226,7 +245,7 @@ local function create_wibox(s, available_groups)
                 table.insert(((i<available_height_items) and new_keys or overlap_leftovers), keys[i])
             end
             keys = new_keys
-            table.insert(keys, {hotkey=markup.fg(widget.modifiers_color, "▽"), description=""})
+            table.insert(keys, {key=markup.fg(widget.modifiers_color, "▽"), description=""})
         end
         if not current_column then
             current_column = {layout=wibox.layout.fixed.vertical()}
@@ -238,9 +257,19 @@ local function create_wibox(s, available_groups)
             local max_label_content = ""
             local joined_labels = ""
             for i, key in ipairs(_keys) do
-                local length = string.len(key.hotkey) + string.len(key.description)
-                local rendered_hotkey = markup.font(widget.title_font, key.hotkey.." ") ..
-                    (markup.font(widget.description_font, key.description) or "")
+                local length = string.len(key.key or '') + string.len(key.description or '')
+                local modifiers = key.mod
+                if not modifiers or modifiers == "none" then
+                    modifiers = ""
+                else
+                    length = length + string.len(modifiers) + 1 -- +1 for "+" character
+                    modifiers = markup.fg(widget.modifiers_color, modifiers.."+")
+                end
+                local rendered_hotkey = markup.font(widget.title_font,
+                    modifiers .. (key.key or "") .. " "
+                ) .. markup.font(widget.description_font,
+                    key.description or ""
+                )
                 if length > max_label_width then
                     max_label_width = length
                     max_label_content = rendered_hotkey
@@ -286,7 +315,7 @@ local function create_wibox(s, available_groups)
         else
             available_width_px = available_width_px - item.max_width
         end
-        local column_margin = wibox.layout.margin()
+        local column_margin = wibox.container.margin()
         column_margin:set_widget(item.layout)
         column_margin:set_left(widget.group_margin)
         columns:add(column_margin)
@@ -347,8 +376,15 @@ function widget.show_help(c, s)
     for group, _ in pairs(group_list) do
         local need_match
         for group_name, data in pairs(widget.group_rules) do
-            if group_name==group and data.rule then
-                if not c or not awful.rules.match(c, data.rule) then
+            if group_name==group and (
+                data.rule or data.rule_any or data.except or data.except_any
+            ) then
+                if not c or not awful.rules.matches(c, {
+                    rule=data.rule,
+                    rule_any=data.rule_any,
+                    except=data.except,
+                    except_any=data.except_any
+                }) then
                     need_match = true
                     break
                 end
@@ -386,8 +422,7 @@ end
 --- Add hotkey descriptions for third-party applications.
 -- @tparam table hotkeys Table with bindings,
 -- see `awful.hotkeys_popup.key.vim` as an example.
--- @tparam[opt] bool nosort Do not sort hotkeys alphabetically.
-function widget.add_hotkeys(hotkeys, nosort)
+function widget.add_hotkeys(hotkeys)
     for group, bindings in pairs(hotkeys) do
         for _, binding in ipairs(bindings) do
             local modifiers = binding.modifiers
@@ -402,10 +437,9 @@ function widget.add_hotkeys(hotkeys, nosort)
             end
         end
     end
-    if not nosort then
-        sort_hotkeys(widget.additional_hotkeys)
-    end
+    sort_hotkeys(widget.additional_hotkeys)
 end
+
 
 return widget
 

@@ -8,7 +8,6 @@
 ---------------------------------------------------------------------------
 
 -- Grab environment we need
-local math = math
 local ipairs = ipairs
 local capi =
 {
@@ -42,9 +41,11 @@ function floating.mouse_resize_handler(c, corner, x, y)
     end
 
     capi.mousegrabber.run(function (_mouse)
+                              if not c.valid then return false end
+
                               _mouse.x = _mouse.x + coordinates_delta.x
                               _mouse.y = _mouse.y + coordinates_delta.y
-                              for k, v in ipairs(_mouse.buttons) do
+                              for _, v in ipairs(_mouse.buttons) do
                                   if v then
                                       local ng
                                       prev_coords = { x =_mouse.x, y = _mouse.y }

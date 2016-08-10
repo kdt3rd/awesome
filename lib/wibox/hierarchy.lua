@@ -10,13 +10,14 @@
 ---------------------------------------------------------------------------
 
 local matrix = require("gears.matrix")
+local protected_call = require("gears.protected_call")
 local cairo = require("lgi").cairo
 local base = require("wibox.widget.base")
 local no_parent = base.no_parent_I_know_what_I_am_doing
 
 local hierarchy = {}
 
-local function hierarchy_new(widget, redraw_callback, layout_callback, callback_arg)
+local function hierarchy_new(redraw_callback, layout_callback, callback_arg)
     local result = {
         _matrix = matrix.identity,
         _matrix_to_device = matrix.identity,
@@ -107,7 +108,7 @@ function hierarchy_update(self, context, widget, width, height, region, matrix_t
     for _, w in ipairs(layout_result or {}) do
         local r = table.remove(old_children, 1)
         if not r then
-            r = hierarchy_new(w._widget, self._redraw_callback, self._layout_callback, self._callback_arg)
+            r = hierarchy_new(self._redraw_callback, self._layout_callback, self._callback_arg)
             r._parent = self
         end
         hierarchy_update(r, context, w._widget, w._width, w._height, region, w._matrix, matrix_to_device * w._matrix)
@@ -132,12 +133,12 @@ function hierarchy_update(self, context, widget, width, height, region, matrix_t
     -- Check which part needs to be redrawn
 
     -- Are there any children which were removed? Their area needs a redraw.
-    for _, h in ipairs(old_children) do
-        local x, y, width, height = matrix.transform_rectangle(h._matrix_to_device, h:get_draw_extents())
+    for _, child in ipairs(old_children) do
+        local x, y, w, h = matrix.transform_rectangle(child._matrix_to_device, child:get_draw_extents())
         region:union_rectangle(cairo.RectangleInt{
-            x = x, y = y, width = width, height = height
+            x = x, y = y, width = w, height = h
         })
-        h._parent = nil
+        child._parent = nil
     end
 
     -- Did we change and need to be redrawn?
@@ -167,7 +168,7 @@ end
 -- @param callback_arg A second argument that is given to the above callbacks.
 -- @return A new widget hierarchy
 function hierarchy.new(context, widget, width, height, redraw_callback, layout_callback, callback_arg)
-    local result = hierarchy_new(widget, redraw_callback, layout_callback, callback_arg)
+    local result = hierarchy_new(redraw_callback, layout_callback, callback_arg)
     result:update(context, widget, width, height)
     return result
 end
@@ -181,7 +182,7 @@ end
 -- @return A cairo region describing the changed parts (either the `region`
 --   argument or a new, internally created region).
 function hierarchy:update(context, widget, width, height, region)
-    local region = region or cairo.Region.create()
+    region = region or cairo.Region.create()
     hierarchy_update(self, context, widget, width, height, region, self._matrix, self._matrix_to_device)
     return region
 end
@@ -247,7 +248,7 @@ end
 
 --- Does the given cairo context have an empty clip (aka "no drawing possible")?
 local function empty_clip(cr)
-    local x, y, width, height = cr:clip_extents()
+    local _, _, width, height = cr:clip_extents()
     return width == 0 or height == 0
 end
 
@@ -258,7 +259,7 @@ end
 -- @param cr The cairo context that is used for drawing.
 function hierarchy:draw(context, cr)
     local widget = self:get_widget()
-    if not widget.visible then
+    if not widget._private.visible then
         return
     end
 
@@ -271,20 +272,13 @@ function hierarchy:draw(context, cr)
 
     -- Draw if needed
     if not empty_clip(cr) then
-        local opacity = widget.opacity
+        local opacity = widget:get_opacity()
         local function call(func, extra_arg1, extra_arg2)
             if not func then return end
-            local function error_function(err)
-                print(debug.traceback("Error while drawing widget: " .. tostring(err), 2))
-            end
             if not extra_arg2 then
-                xpcall(function()
-                    func(widget, context, cr, self:get_size())
-                end, error_function)
+                protected_call(func, widget, context, cr, self:get_size())
             else
-                xpcall(function()
-                    func(widget, context, extra_arg1, extra_arg2, cr, self:get_size())
-                end, error_function)
+                protected_call(func, widget, context, extra_arg1, extra_arg2, cr, self:get_size())
             end
         end
 

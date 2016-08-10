@@ -10,23 +10,15 @@
 
 -- Grab environment
 local os = os
-local print = print
-local pcall = pcall
 local pairs = pairs
 local type = type
 local dofile = dofile
 local setmetatable = setmetatable
-local util = require("awful.util")
 local lgi = require("lgi")
-local cairo = lgi.cairo
 local Pango = lgi.Pango
 local PangoCairo = lgi.PangoCairo
-local capi =
-{
-    screen = screen,
-    awesome = awesome
-}
 local gears_debug = require("gears.debug")
+local protected_call = require("gears.protected_call")
 
 local xresources = require("beautiful.xresources")
 
@@ -99,7 +91,7 @@ end
 -- @treturn lgi.Pango.FontDescription
 function beautiful.get_merged_font(name, merge)
     local font = beautiful.get_font(name)
-    local merge = Pango.FontDescription.from_string(merge)
+    merge = Pango.FontDescription.from_string(merge)
     local merged = font:copy_static()
     merged:merge(merge, true)
     return beautiful.get_font(merged:to_string())
@@ -118,25 +110,19 @@ end
 --   containing all the theme values.
 function beautiful.init(config)
     if config then
-        local success
         local homedir = os.getenv("HOME")
 
-        -- If config is the path to the theme file,
-        -- run this file,
-        -- else if it is the theme table, save it
+        -- If `config` is the path to a theme file, run this file,
+        -- otherwise if it is a theme table, save it.
         if type(config) == 'string' then
             -- Expand the '~' $HOME shortcut
             config = config:gsub("^~/", homedir .. "/")
-            success, theme = xpcall(function() return dofile(config) end,
-                                    debug.traceback)
+            theme = protected_call(dofile, config)
         elseif type(config) == 'table' then
-            success = true
             theme = config
         end
 
-        if not success then
-            return gears_debug.print_error("beautiful: error loading theme file " .. theme)
-        elseif theme then
+        if theme then
             -- expand '~'
             if homedir then
                 for k, v in pairs(theme) do

@@ -5,9 +5,7 @@
 -- @module gears.debug
 ---------------------------------------------------------------------------
 
-local error = error
 local tostring = tostring
-local traceback = debug.traceback
 local print = print
 local type = type
 local pairs = pairs
@@ -64,13 +62,13 @@ function debug.dump(data, tag, depth)
     print(debug.dump_return(data, tag, depth))
 end
 
--- Print an warning message
+--- Print an warning message
 -- @tparam string message The warning message to print
 function debug.print_warning(message)
     io.stderr:write(os.date("%Y-%m-%d %T W: ") .. tostring(message) .. "\n")
 end
 
--- Print an error message
+--- Print an error message
 -- @tparam string message The error message to print
 function debug.print_error(message)
     io.stderr:write(os.date("%Y-%m-%d %T E: ") .. tostring(message) .. "\n")
